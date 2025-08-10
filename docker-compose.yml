@@ -6,7 +6,7 @@ services:
       POSTGRES_USER: flow
       POSTGRES_PASSWORD: flow
       POSTGRES_DB: flowdb
-    ports: ["5438:5432"]
+    ports: ["5437:5432"]
 
   flow-api:
     build:
