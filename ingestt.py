@@ -49,12 +49,14 @@ def _create_accounts_from_rootfi_items(
 
         # 2. Create the corresponding FinancialEntry record
         # rootfi data provides one value for the whole period, so we use the report's end_date
-        entry = FinancialEntry(
-            value=item_data.get("value", 0.0),
-            date=report_end_date,
-            account_id=new_account.id,
-        )
-        session.add(entry)
+        value = item_data.get("value", 0.0)
+        if value != 0:  # Only create entries for non-zero values
+            entry = FinancialEntry(
+                value=value,
+                date=report_end_date,
+                account_id=new_account.id,
+            )
+            session.add(entry)
 
         # 3. Recurse for any nested child items
         if child_items := item_data.get("line_items"):
@@ -72,6 +74,10 @@ def ingest_rootfi_data(session: Session, data_path: Path):
 
     for record_data in financial_records:
         try:
+            # Skip records that don't have essential fields
+            if not record_data.get("period_end") or not record_data.get("period_start") or not record_data.get("rootfi_updated_at"):
+                continue
+                
             # 1. Create the UnifiedReport for this record
             report_end_date = datetime.fromisoformat(record_data["period_end"])
             report = UnifiedReport(
@@ -79,10 +85,10 @@ def ingest_rootfi_data(session: Session, data_path: Path):
                 report_basis="Unknown", # Not provided in this data source
                 start_period=datetime.fromisoformat(record_data["period_start"]),
                 end_period=report_end_date,
-                currency=record_data.get("currency_id", "USD"),
+                currency=record_data.get("currency_id") or "USD",
                 generated_time=datetime.fromisoformat(record_data["rootfi_updated_at"]),
-                platform_id=record_data.get("platform_id"),
-                platform_unique_id=str(record_data.get("rootfi_id")),
+                platform_id="rootfi",  # Static identifier for this data source
+                platform_unique_id=str(record_data.get("rootfi_id")) if record_data.get("rootfi_id") else None,
                 rootfi_company_id=record_data.get("rootfi_company_id"),
                 gross_profit=record_data.get("gross_profit"),
                 operating_profit=record_data.get("operating_profit"),
@@ -104,9 +110,10 @@ def ingest_rootfi_data(session: Session, data_path: Path):
 
             for json_key, group_name in item_mapping.items():
                 if items_data := record_data.get(json_key):
-                    _create_accounts_from_rootfi_items(
-                        session, items_data, group_name, report.id, report.end_period
-                    )
+                    if isinstance(items_data, list) and len(items_data) > 0:
+                        _create_accounts_from_rootfi_items(
+                            session, items_data, group_name, report.id, report.end_period
+                        )
         except Exception as e:
             print(f"❌ Error ingesting rootfi record: {e}")
             session.rollback()
@@ -126,13 +133,31 @@ def _create_accounts_from_qbo_rows(
 ):
     """Recursively processes rows from QBO data to create unified Account and FinancialEntry records."""
     for row_data in rows:
-        col_data = row_data.get('Header', row_data.get('Summary', row_data)).get('ColData')
-        if not col_data:
+        # Get ColData from Header, Summary, or the row itself
+        col_data = None
+        if 'Header' in row_data and 'ColData' in row_data['Header']:
+            col_data = row_data['Header']['ColData']
+        elif 'Summary' in row_data and 'ColData' in row_data['Summary']:
+            col_data = row_data['Summary']['ColData']
+        elif 'ColData' in row_data:
+            col_data = row_data['ColData']
+            
+        if not col_data or not isinstance(col_data, list) or len(col_data) == 0:
+            # Process child rows even if current row has no ColData
+            if 'Rows' in row_data and 'Row' in row_data['Rows']:
+                _create_accounts_from_qbo_rows(
+                    session, row_data['Rows']['Row'], report_id, date_map, accounts_cache, parent_account, parent_group
+                )
             continue
 
         account_info = col_data[0]
         source_id = account_info.get('id')
-        account_name = account_info['value']
+        account_name = account_info.get('value', 'Unnamed Account')
+        
+        # Skip if there's no account name
+        if not account_name or account_name.strip() == '':
+            continue
+            
         current_group = row_data.get('group', parent_group) or GROUP_OTHER
         current_account = parent_account
 
@@ -154,12 +179,18 @@ def _create_accounts_from_qbo_rows(
             # Create FinancialEntry records for each time-based column
             for i, cell in enumerate(col_data):
                 if i in date_map and cell.get('value'):
-                    entry = FinancialEntry(
-                        date=date_map[i],
-                        value=float(cell['value']),
-                        account_id=current_account.id
-                    )
-                    session.add(entry)
+                    try:
+                        value = float(cell['value'])
+                        if value != 0:  # Only create entries for non-zero values
+                            entry = FinancialEntry(
+                                date=date_map[i],
+                                value=value,
+                                account_id=current_account.id
+                            )
+                            session.add(entry)
+                    except (ValueError, TypeError):
+                        # Skip invalid values
+                        continue
         
         # Recurse for child rows
         if 'Rows' in row_data and 'Row' in row_data['Rows']:
@@ -190,11 +221,13 @@ def ingest_qbo_data(session: Session, data_path: Path):
     print(f"📊 Created Report '{report.report_name}' with ID: {report.id}")
 
     # 2. Prepare column-to-date mapping
-    date_map = {
-        i: datetime.fromisoformat(meta['Value'])
-        for i, col in enumerate(data['Columns']['Column'])
-        if i > 0 and (meta := next((m for m in col.get('MetaData', []) if m['Name'] == 'EndDate'), None))
-    }
+    date_map = {}
+    for i, col in enumerate(data['Columns']['Column']):
+        if i > 0:  # Skip the first column (Account column)
+            meta_data = col.get('MetaData', [])
+            end_date_meta = next((m for m in meta_data if m['Name'] == 'EndDate'), None)
+            if end_date_meta:
+                date_map[i] = datetime.fromisoformat(end_date_meta['Value'])
 
     # 3. Process all rows to create Accounts and Entries
     _create_accounts_from_qbo_rows(session, data['Rows']['Row'], report.id, date_map, accounts_cache={})
