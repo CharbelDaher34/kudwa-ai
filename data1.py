@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import List, Optional
 from db import engine, get_db_session
 from sqlmodel import Field, Relationship, SQLModel, create_engine, Session, select, func
-from data.models import *
+from data.modvvvels import *
 
 # 2. PARSING AND DATA INJECTION LOGIC
 # ==============================================================================

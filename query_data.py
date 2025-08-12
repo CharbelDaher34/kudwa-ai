@@ -4,7 +4,7 @@ Query script to demonstrate accessing the ingested financial data
 """
 
 from sqlmodel import SQLModel, Session, select, func
-from data.models import (
+from data.modvvvels import (
     FinancialStatement, 
     RevenueItem, 
     CostOfGoodsSoldItem, 

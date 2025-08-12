@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 from sqlmodel import SQLModel, Session, select
-from data.models import (
+from data.modvvvels import (
     FinancialStatement, 
     RevenueItem, 
     CostOfGoodsSoldItem, 

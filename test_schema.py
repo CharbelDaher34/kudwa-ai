@@ -4,7 +4,7 @@ Test script to validate the FinancialReport schema against the actual JSON data
 """
 
 import json
-from data.models import FinancialReport, LineItem
+from data.modvvvels import FinancialReport, LineItem
 
 def test_data_set_2():
     """Test the schema against data_set_2.json"""
