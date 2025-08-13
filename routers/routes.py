@@ -2,26 +2,21 @@ from __future__ import annotations
 
 from typing import List, Dict
 
-from fastapi import APIRouter, HTTPException, Request
+
+from fastapi import APIRouter, HTTPException, Request, Depends
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
+from sqlmodel import Session, select
+from data.models import Conversation, Message
+from tomato.client import FinancialDataChat
+from typing import List, Optional
+import asyncio
+from db import get_session
 
-from services import (
-    AskRequest,
-    AskResponse,
-    SchemaGraph,
-    SchemaIndex,
-    _dialect_from_engine,
-    bfs_join_path,
-    build_join_skeleton,
-    build_schema_snippet,
-    build_prompt,
-    call_llm_sql,
-    guard_sql,
-)
 
 
 router = APIRouter()
+
 
 
 @router.get("/health")
@@ -35,63 +30,105 @@ def health(request: Request):
         return {"status": "error", "detail": str(e)}
 
 
-@router.post("/ask", response_model=AskResponse)
-def ask(request: Request, req: AskRequest):
-    engine: Engine = request.app.state.engine
-    graph: SchemaGraph = request.app.state.graph
-    sindex: SchemaIndex = request.app.state.sindex
+# --- Conversation Endpoints ---
+@router.post("/conversations", response_model=Conversation)
+def create_conversation(topic: Optional[str] = None, session: Session = Depends(get_session)):
+    conv = Conversation(topic=topic)
+    session.add(conv)
+    session.commit()
+    session.refresh(conv)
+    return conv
 
-    dialect = _dialect_from_engine(engine)
+@router.get("/conversations", response_model=List[Conversation])
+def list_conversations(session: Session = Depends(get_session)):
+    return session.exec(select(Conversation)).all()
 
-    # 1) Retrieve relevant columns → tables
-    col_cands = sindex.search(req.question, k=req.k)
-    tables_ranked: List[str] = []
-    for t, c in col_cands:
-        if t not in tables_ranked:
-            tables_ranked.append(t)
-    tables = tables_ranked[: max(1, req.max_tables)]
-
-    if not tables:
-        raise HTTPException(400, detail="No tables detected")
-
-    # 2) Build join plan
-    joins = bfs_join_path(graph, tables)
-    join_skeleton = build_join_skeleton(joins)
-
-    # 3) Allowed columns: all columns of selected tables (keeps LLM inside rails)
-    allowed: Dict[str, List[str]] = {}
-    for t in tables:
-        allowed[t] = [c.name for c in graph.columns if c.table == t]
-
-    # 4) Build schema text (with samples)
-    schema_text = build_schema_snippet(graph, tables)
-
-    # 5) Prompt & generate
-    prompt = build_prompt(req.question, dialect, allowed, schema_text, join_skeleton)
-
-    attempted_repairs = 0
-    warnings: List[str] = []
-
-    for attempt in range(2):  # one try + one self-repair
-        try:
-            sql_raw = call_llm_sql(prompt)
-            sql_norm = guard_sql(sql_raw, dialect)
-            # 6) Execute
-            with engine.connect() as conn:
-                rs = conn.execute(text(sql_norm))
-                cols = list(rs.keys())
-                rows = [list(r) for r in rs.fetchall()[:200]]
-            return AskResponse(sql=sql_norm, columns=cols, rows=rows, attempted_repairs=attempted_repairs, warnings=warnings)
-        except Exception as e:
-            attempted_repairs += 1
-            # enrich prompt with last error and full allowed schema to help repair
-            prompt = (
-                prompt
-                + f"\n\nThe previous SQL caused this {dialect} error: {str(e)}. "
-                  "Fix the SQL. Return only a single SELECT that adheres to the allowed tables/columns and joins."
-            )
-            last_err = str(e)
-    # If we got here, fail gracefully
-    raise HTTPException(422, detail={"message": "Failed to generate/execute SQL after retries.", "last_error": last_err, "prompt": prompt[-1500:]})
+@router.get("/conversations/{conv_id}", response_model=Conversation)
+def get_conversation(conv_id: int, session: Session = Depends(get_session)):
+    conv = session.get(Conversation, conv_id)
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return conv
 
 
+# --- Message Endpoints ---
+@router.get("/conversations/{conv_id}/messages", response_model=List[Message])
+def list_messages(conv_id: int, session: Session = Depends(get_session)):
+    conv = session.get(Conversation, conv_id)
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return conv.messages
+
+@router.post("/conversations/{conv_id}/messages", response_model=Message)
+def create_message(conv_id: int, content: str, sender_type: str = "user", sender: Optional[str] = None, session: Session = Depends(get_session)):
+    conv = session.get(Conversation, conv_id)
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    msg = Message(conversation_id=conv_id, sender_type=sender_type, sender=sender, content=content)
+    session.add(msg)
+    session.commit()
+    session.refresh(msg)
+    return msg
+
+
+# --- Ask Endpoint ---
+@router.post("/ask")
+async def ask(conv_id: int, prompt: str, sender: Optional[str] = None, session: Session = Depends(get_session)):
+    conv = session.get(Conversation, conv_id)
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    # 1. Create user message
+    user_msg = Message(
+        conversation_id=conv_id,
+        sender_type="user",
+        sender=sender,
+        content=prompt
+    )
+    session.add(user_msg)
+    session.commit()
+    session.refresh(user_msg)
+
+    # 2. Call LLM via FinancialDataChat
+    chat = FinancialDataChat()
+    # Use previous messages for context
+    history = session.exec(select(Message).where(Message.conversation_id == conv_id)).all()
+    # Convert to list of dicts for LLM (if needed)
+    # If FinancialDataChat expects ModelMessage, adapt accordingly
+    chat.message_history = []  # You may need to convert Message to ModelMessage
+    # For now, just send the prompt
+    result = await chat.run_interaction(prompt)
+
+    # 3. Extract usage information from the result
+    usage_info = None
+    new_messages = result.new_messages()
+    
+    # Find the ModelResponse in the new messages to get usage info
+    for message in new_messages:
+        if hasattr(message, 'usage') and message.usage:
+            usage_info = {
+                "requests": getattr(message.usage, 'requests', None),
+                "request_tokens": getattr(message.usage, 'request_tokens', None),
+                "response_tokens": getattr(message.usage, 'response_tokens', None),
+                "total_tokens": getattr(message.usage, 'total_tokens', None),
+                "model_name": getattr(message, 'model_name', None),
+                "details": getattr(message.usage, 'details', None),
+            }
+            break  # We found the usage info, no need to continue
+
+    # 4. Log system message and usage
+    system_msg = Message(
+        conversation_id=conv_id,
+        sender_type="system",
+        sender="llm",
+        content=result.output,
+        usage=usage_info
+    )
+    session.add(system_msg)
+    session.commit()
+    session.refresh(system_msg)
+
+    return {"user_message": user_msg, "system_message": system_msg}
+
+
+## Removed old stub ask endpoint (replaced by async /ask above)

@@ -58,6 +58,24 @@ class DatabaseInspector:
                 print("  🔗 Relationships:")
                 for rel in data['relationships']:
                     print(f"    • {rel['from']} → {rel['to']}")
+    def get_schema_text(self) -> str:
+        """Returns the full database schema as a formatted text string."""
+        info = self.get_tables_info()
+        lines = []
+        for table, data in info.items():
+            lines.append(f"Table: {table}")
+            lines.append("  Columns:")
+            for col in data['columns']:
+                null = "NULL" if col['nullable'] else "NOT NULL"
+                desc = f" - {col['description']}" if 'description' in col else ""
+                lines.append(f"    {col['name']} ({col['type']}, {null}){desc}")
+
+            if data['relationships']:
+                lines.append("  Relationships:")
+                for rel in data['relationships']:
+                    lines.append(f"    {rel['from']} → {rel['to']}")
+            lines.append("")  # Blank line between tables
+        return "\n".join(lines)
 # Example usage:
 if __name__ == "__main__":
     from db import DATABASE_URL

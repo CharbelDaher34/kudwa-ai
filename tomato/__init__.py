@@ -2,21 +2,17 @@ import argparse
 import logging
 
 from .server import (
-    get_tables,
-    describe_table,
-    filter_table_names,
+    get_connection,
     execute_query,
-    query_database,
+    fetch_tables_info,
     mcp,
 )
 
 # Optionally expose other important items at package level
 __all__ = [
-    "get_tables",
-    "describe_table",
-    "filter_table_names",
-    "execute_query",
-    "query_database",
+    "get_connection",
+    "execute_query", 
+    "fetch_tables_info",
 ]
 
 

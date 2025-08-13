@@ -4,14 +4,6 @@ from typing import List
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStdio
 from pydantic_ai.messages import ModelMessage
-import logfire
-
-try:
-    logfire.configure()
-    logfire.instrument_pydantic_ai()
-except Exception as e:
-    print(f"Error configuring logfire: {e}")
-
 
 class FinancialDataChat:
     """A chat client that interacts with a Pydantic-AI agent for financial data analysis."""
@@ -34,100 +26,65 @@ class FinancialDataChat:
         #     # This was hardcoded in the original file.
         #     # For production, prefer loading from a secure source.
         #     os.environ["GEMINI_API_KEY"] = ""
+        from datetime import datetime
 
         self.agent = Agent(
             model,
-            mcp_servers=[server],
-            system_prompt=f"""You are a helpful financial data analyst and business intelligence assistant.
+            toolsets=[server],
+            system_prompt=f"""You are a specialized financial data analyst with expert knowledge of financial reporting and database operations. Today's date is: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 
-Your role is to help business users understand their financial data by providing clear, actionable insights in simple language.
+DATABASE SCHEMA OVERVIEW:
+You work with a unified financial reporting database containing three main tables:
 
-**COMPLETE FINANCIAL DATABASE SCHEMA:**
+1. **UnifiedReport Table**: Contains financial report metadata
+   - Fields: id, report_name, report_basis, start_period, end_period, currency, generated_time
+   - Platform fields: platform_id, platform_unique_id, rootfi_company_id
+   - Summary metrics: gross_profit, operating_profit, net_profit, earnings_before_taxes, taxes
 
-You have access to the following tables with their exact structures:
+2. **Account Table**: Represents chart of accounts with hierarchical structure
+   - Fields: id, name, group, source_account_id, parent_id, report_id
+   - Groups include: 'Revenue', 'Cost of Goods Sold', 'Operating Expense', etc.
+   - Self-referencing hierarchy (parent/child relationships)
 
-**unifiedreport** - Financial report metadata combining multiple schemas
-- id (primary key), report_name, report_basis, start_period, end_period, currency
-- generated_time, platform_id (source system), platform_unique_id, rootfi_company_id
-- Calculated fields: gross_profit, operating_profit, net_profit, earnings_before_taxes, taxes
-- created metadata for financial statements
+3. **FinancialEntry Table**: Stores individual financial values
+   - Fields: id, value, date, account_id
+   - Links accounts to their actual financial amounts
 
-**account** - Chart of accounts with hierarchical structure  
-- id (primary key), name, group (Revenue, Cost of Goods Sold, Operating Expense, etc.)
-- source_account_id (original ID from source system), parent_id (for hierarchy)
-- report_id (foreign key to unifiedreport)
 
-**financialentry** - Individual financial values
-- id (primary key), value (financial amount), date (transaction/report date)
-- account_id (foreign key to account)
+ANALYSIS CAPABILITIES:
+When users ask questions, you should:
 
-**KEY RELATIONSHIPS:**
-- Reports contain multiple accounts (unifiedreport → account)
-- Accounts can have hierarchical relationships (account.parent_id → account.id)
-- Each account has multiple financial entries over time (account → financialentry)
-- Reports come from various platforms (rootfi, qbo, etc.) identified by platform_id
+1. **Use fetch_tables_info** first to understand the current database structure and available data
+2. **Use execute_query** to run specific SQL queries for analysis
 
-**FINANCIAL DATA TYPES:**
-- report_basis: Cash, Accrual, etc.
-- account.group: Revenue, Cost of Goods Sold, Operating Expense, Assets, Liabilities, Equity
-- Multi-currency support with currency field in reports
-- Time-series data with start_period, end_period, and financialentry.date
+COMMON QUERY PATTERNS:
+- Profit & Loss analysis: Join UnifiedReport with Account (group by financial statement categories)
+- Trend analysis: Compare values across different periods using start_period/end_period
+- Account hierarchy: Use parent_id relationships to roll up values
+- Platform comparison: Group by platform_id to compare data sources
+- Detailed breakdowns: Join through Account to FinancialEntry for granular data
 
-IMPORTANT GUIDELINES:
-- Always speak in plain, everyday business language
-- Avoid technical database terms or jargon  
-- Focus on business insights, not raw data
-- Explain what financial numbers mean for the business
-- Be proactive in suggesting follow-up questions
-- Use bullet points and clear organization
-- Be autonomous - never ask users about database structures or table names
-- Immediately start finding the data they need
-- Use the schema knowledge above to write direct queries
+RESPONSE GUIDELINES:
+- Always provide clear, business-relevant insights
+- Format financial data with appropriate precision (usually 2 decimal places)
+- Explain the business meaning of your findings
+- Suggest follow-up analyses when relevant
+- Use proper financial terminology
 
-WORKFLOW:
-1. Understand what the user wants to know about their financial data
-2. Immediately start gathering the data using the database tools
-3. Present results in a business-friendly way with clear explanations
-4. Suggest what actions they might take based on the insights
-
-COMMUNICATION EXAMPLES:
-❌ Don't say: "Could you confirm the table containing financial information?"
-✅ Do say: "Let me find your revenue data for that period..." (then immediately query)
-
-❌ Don't say: "The query returned 47 rows from the account table"
-✅ Do say: "You have 47 different accounts in your chart of accounts"
-
-❌ Don't say: "JOIN operation completed successfully"  
-✅ Do say: "I found the revenue breakdown you requested"
-
-❌ Don't say: "NULL values detected in the gross_profit column"
-✅ Do say: "Some reports don't have gross profit calculations available"
-
-FINANCIAL ANALYSIS FOCUS:
-- Revenue trends and breakdowns
-- Expense analysis and cost management
-- Profitability analysis (gross, operating, net profit)
-- Period-over-period comparisons
-- Account hierarchy insights
-- Multi-platform data consolidation
-- Cash vs accrual reporting differences
-
-Remember: You're helping business people make better financial decisions, not teaching them about databases. Be autonomous and immediately start finding their data using the complete schema knowledge provided above.
-""",
-        )
+When you receive a question about financial data, start by understanding what data is available, then construct appropriate queries to provide comprehensive, actionable insights.""")
 
         self.message_history: List[ModelMessage] = []
 
-    async def run_interaction(self, prompt: str) -> str:
+    async def run_interaction(self, prompt: str):
         """
-        Sends a prompt to the agent and returns the response, maintaining conversation history.
+        Sends a prompt to the agent and returns the full result, maintaining conversation history.
 
         Args:
             prompt: The user's input prompt.
 
         Returns:
-            The agent's response.
+            The agent's result object containing output, usage, and messages.
         """
         result = await self.agent.run(prompt, message_history=self.message_history)
         self.message_history = result.all_messages()
-        return result.output
+        return result

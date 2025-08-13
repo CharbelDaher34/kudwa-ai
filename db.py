@@ -17,7 +17,7 @@ def get_session():
     Returns a new session from the session factory.
     This is suitable for use in a FastAPI dependency.
     """
-    db = SessionLocal()
+    db = Session(engine)
     try:
         yield db
     finally:

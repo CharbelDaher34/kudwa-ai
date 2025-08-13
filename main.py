@@ -33,13 +33,24 @@ app = FastAPI(title="Schema-Agnostic Text-to-SQL")
 
 @app.on_event("startup")
 def _startup():
-    db_url = os.getenv("DATABASE_URL", "sqlite:///example.db")
-    engine = create_engine(db_url, pool_pre_ping=True)
-
+    from db import DATABASE_URL, engine, SessionLocal
+    from sqlmodel import SQLModel
+    
     app.state.engine = engine
-
-
+    app.state.SessionLocal = SessionLocal
+    
+    # First drop and recreate schema, then create tables
+    # from sqlalchemy import text
+    # with engine.begin() as conn:
+    #     conn.exec_driver_sql("DROP SCHEMA IF EXISTS public CASCADE;")
+    #     conn.exec_driver_sql("CREATE SCHEMA public;")
+    
+    # Create tables after schema is clean
+    SQLModel.metadata.create_all(engine)
 
 app.include_router(router)
 
+if __name__ == "__main__":
+  import uvicorn
+  uvicorn.run("main:app", host="0.0.0.0", port=8430, reload=True)
 
