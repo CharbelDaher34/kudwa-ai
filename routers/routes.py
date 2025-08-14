@@ -93,11 +93,29 @@ async def ask(conv_id: int, prompt: str, sender: Optional[str] = None, session: 
     chat = FinancialDataChat()
     # Use previous messages for context
     history = session.exec(select(Message).where(Message.conversation_id == conv_id)).all()
-    # Convert to list of dicts for LLM (if needed)
-    # If FinancialDataChat expects ModelMessage, adapt accordingly
-    chat.message_history = []  # You may need to convert Message to ModelMessage
+    
+    # Structure the chat history in a readable format
+    formatted_history = []
+    for msg in history:
+        # Format: "sender_type: content" or "sender_type (sender): content" if sender is provided
+        if msg.sender:
+            formatted_msg = f"{msg.sender_type} ({msg.sender}): {msg.content}"
+        else:
+            formatted_msg = f"{msg.sender_type}: {msg.content}"
+        formatted_history.append(formatted_msg)
+    
+    # Join all messages with newlines
+    history_text = "\n".join(formatted_history)
+    
+    enhanced_prompt = f'''
+    the past messages are:
+    {history_text}
+
+    now given the chat history answer this question:
+    {prompt}
+    '''
     # For now, just send the prompt
-    result = await chat.run_interaction(prompt)
+    result = await chat.run_interaction(enhanced_prompt)
 
     # 3. Extract usage information from the result
     usage_info = None

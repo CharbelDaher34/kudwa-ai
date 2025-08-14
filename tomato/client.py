@@ -85,6 +85,5 @@ When you receive a question about financial data, start by understanding what da
         Returns:
             The agent's result object containing output, usage, and messages.
         """
-        result = await self.agent.run(prompt, message_history=self.message_history)
-        self.message_history = result.all_messages()
+        result = await self.agent.run(prompt)
         return result

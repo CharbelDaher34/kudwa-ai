@@ -37,17 +37,12 @@ def _create_accounts_from_rootfi_items(
             continue
 
         # 1. Create the Account record
-        account_metadata = {}
-        if item_data.get("account_id"):
-            account_metadata["source_account_id"] = item_data.get("account_id")
-        
         new_account = Account(
             name=item_data.get("name", "Unnamed Account"),
             group=group_name,
             source_account_id=item_data.get("account_id"),
             report_id=report_id,
             parent_id=parent_id,
-            extra_data=account_metadata,
         )
         session.add(new_account)
         session.flush()  # Assigns an ID to new_account for linking
@@ -56,17 +51,10 @@ def _create_accounts_from_rootfi_items(
         # rootfi data provides one value for the whole period, so we use the report's end_date
         value = item_data.get("value", 0.0)
         if value != 0:  # Only create entries for non-zero values
-            entry_metadata = {
-                "period_type": "monthly",
-                "source": "rootfi"
-            }
-            
             entry = FinancialEntry(
                 value=value,
                 date=report_end_date,
                 account_id=new_account.id,
-                period_type="monthly",
-                extra_data=entry_metadata,
             )
             session.add(entry)
 
@@ -92,18 +80,6 @@ def ingest_rootfi_data(session: Session, data_path: Path):
                 
             # 1. Create the UnifiedReport for this record
             report_end_date = datetime.fromisoformat(record_data["period_end"])
-            
-            # Prepare metadata for platform-specific fields
-            metadata = {
-                "rootfi_id": record_data.get("rootfi_id"),
-                "rootfi_created_at": record_data.get("rootfi_created_at"),
-                "rootfi_deleted_at": record_data.get("rootfi_deleted_at"),
-                "custom_fields": record_data.get("custom_fields"),
-                "updated_at": record_data.get("updated_at")
-            }
-            # Remove None values from metadata
-            metadata = {k: v for k, v in metadata.items() if v is not None}
-            
             report = UnifiedReport(
                 report_name=f"Financial Statement - {record_data['period_start']} to {record_data['period_end']}",
                 report_basis="Unknown", # Not provided in this data source
@@ -113,13 +89,12 @@ def ingest_rootfi_data(session: Session, data_path: Path):
                 generated_time=datetime.fromisoformat(record_data["rootfi_updated_at"]),
                 platform_id="rootfi",  # Static identifier for this data source
                 platform_unique_id=str(record_data.get("rootfi_id")) if record_data.get("rootfi_id") else None,
-                company_id=str(record_data.get("rootfi_company_id")) if record_data.get("rootfi_company_id") else None,
+                rootfi_company_id=record_data.get("rootfi_company_id"),
                 gross_profit=record_data.get("gross_profit"),
                 operating_profit=record_data.get("operating_profit"),
                 net_profit=record_data.get("net_profit"),
                 earnings_before_taxes=record_data.get("earnings_before_taxes"),
                 taxes=record_data.get("taxes"),
-                extra_data=metadata,
             )
             session.add(report)
             session.flush()  # Get the ID for linking accounts
@@ -188,18 +163,12 @@ def _create_accounts_from_qbo_rows(
 
         if source_id:
             if source_id not in accounts_cache:
-                account_metadata = {
-                    "qbo_account_id": source_id,
-                    "source": "qbo"
-                }
-                
                 new_account = Account(
                     source_account_id=source_id,
                     name=account_name,
                     group=current_group,
                     report_id=report_id,
-                    parent_id=parent_account.id if parent_account else None,
-                    extra_data=account_metadata,
+                    parent_id=parent_account.id if parent_account else None
                 )
                 session.add(new_account)
                 session.flush()
@@ -213,17 +182,10 @@ def _create_accounts_from_qbo_rows(
                     try:
                         value = float(cell['value'])
                         if value != 0:  # Only create entries for non-zero values
-                            entry_metadata = {
-                                "column_index": i,
-                                "source": "qbo"
-                            }
-                            
                             entry = FinancialEntry(
                                 date=date_map[i],
                                 value=value,
-                                account_id=current_account.id,
-                                period_type="monthly",
-                                extra_data=entry_metadata,
+                                account_id=current_account.id
                             )
                             session.add(entry)
                     except (ValueError, TypeError):
@@ -244,15 +206,6 @@ def ingest_qbo_data(session: Session, data_path: Path):
 
     # 1. Create the UnifiedReport
     header = data['Header']
-    
-    # Prepare metadata for QBO-specific fields
-    qbo_metadata = {
-        "summarize_columns_by": header.get("SummarizeColumnsBy"),
-        "options": header.get("Option", [])
-    }
-    # Remove None values from metadata
-    qbo_metadata = {k: v for k, v in qbo_metadata.items() if v is not None}
-    
     report = UnifiedReport(
         report_name=header['ReportName'],
         report_basis=header['ReportBasis'],
@@ -260,8 +213,7 @@ def ingest_qbo_data(session: Session, data_path: Path):
         end_period=datetime.fromisoformat(header['EndPeriod']),
         currency=header['Currency'],
         generated_time=datetime.fromisoformat(header['Time']),
-        platform_id="qbo", # Hardcode the platform for this source
-        extra_data=qbo_metadata,
+        platform_id="qbo" # Hardcode the platform for this source
     )
     session.add(report)
     session.commit() # Commit here to get the final ID and ensure it exists
@@ -310,10 +262,6 @@ def main():
     """Main function to clear DB and handle data ingestion from all sources."""
     print("🚀 Starting Data Ingestion to Unified Schema...")
     
-    # Reset the database for a clean run
-    SQLModel.metadata.drop_all(engine)
-    SQLModel.metadata.create_all(engine)
-    print("🧹 Database has been reset.")
 
     data_dir = Path("AI Engineer x Kudwa Take-Home Test 24a14e124c6780a68e6cdcdeb5442fdf")
     

@@ -5,7 +5,12 @@ from datetime import datetime
 from typing import Optional, List, Dict
 
 # Configuration
-API_BASE_URL = "http://localhost:8430"  # Adjust this to match your FastAPI server
+API_BASE_URL = "http://localhost:8430"  # Adj                if st.button(
+                    f"{'🔵' if is_selected else '⚪'} {topic}",
+                    key=f"conv_{conv['id']}",
+                    use_container_width=True,
+                    help=f"Conversation ID: {conv['id']}"
+                ):is to match your FastAPI server
 
 st.set_page_config(
     page_title="Financial Data Chat",
@@ -124,11 +129,6 @@ def main():
         padding: 0.5rem;
         border-radius: 5px;
         font-size: 0.8rem;
-        margin-top: 0.5rem;
-    }
-    
-    .conversation-button {
-        margin-bottom: 0.5rem;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -175,75 +175,46 @@ def main():
         
         st.markdown("---")
         
-        # Quick create button for immediate use
-        if st.button("🚀 Quick Start Chat", use_container_width=True, type="secondary"):
-            with st.spinner("Creating conversation..."):
-                result = create_conversation("Quick Chat")
-                if result:
-                    st.session_state.selected_conversation_id = result['id']
-                    st.rerun()
-        
-        st.markdown("---")
-        
         # List existing conversations
         if st.session_state.conversations:
-            st.markdown("**📝 Your Conversations:**")
             for conv in st.session_state.conversations:
-                topic = conv.get('topic', f"Chat {conv['id']}")
-                if len(topic) > 25:
-                    topic = topic[:22] + "..."
+                topic = conv.get('topic', f"Conversation {conv['id']}")
+                if len(topic) > 30:
+                    topic = topic[:27] + "..."
                 
                 # Check if this is the selected conversation
                 is_selected = st.session_state.selected_conversation_id == conv['id']
                 
-                # Create conversation button with visual indicator
-                button_text = f"{'🔵' if is_selected else '⚪'} {topic}"
-                
+                # Use different styling for selected conversation
                 if st.button(
-                    button_text,
+                    f"�️ {topic}",
                     key=f"conv_{conv['id']}",
                     use_container_width=True,
-                    help=f"Conversation ID: {conv['id']}"
+                    type="secondary" if is_selected else "tertiary"
                 ):
                     st.session_state.selected_conversation_id = conv['id']
                     st.rerun()
                 
-                # Show additional info for selected conversation
+                # Show conversation info
                 if is_selected:
-                    st.markdown(f"""
-                    <div class="sidebar-info">
-                        📍 Active conversation<br>
-                        🆔 ID: {conv['id']}<br>
-                        📅 Created: {conv.get('created_at', 'Unknown')[:16] if conv.get('created_at') else 'Unknown'}
-                    </div>
-                    """, unsafe_allow_html=True)
+                    st.caption(f"ID: {conv['id']}")
+                    if conv.get('created_at'):
+                        st.caption(f"Created: {conv['created_at'][:16]}")
         else:
-            st.info("💭 No conversations yet.\nCreate one to start chatting!")
+            st.info("No conversations yet.\nClick 'New Conversation' to start!")
         
         st.markdown("---")
         
-        # System status section
-        st.markdown("### 🔧 System Status")
+        # System status
+        st.subheader("🔧 System Status")
+        if st.button("Check API Health", use_container_width=True):
+            if health_check():
+                st.success("✅ API is healthy!")
+            else:
+                st.error("❌ API is not responding")
         
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("🔍", help="Check API Health", use_container_width=True):
-                if health_check():
-                    st.success("✅ Online")
-                else:
-                    st.error("❌ Offline")
-        
-        with col2:
-            if st.button("🔄", help="Refresh Conversations", use_container_width=True):
-                conversations = list_conversations()
-                if conversations:
-                    st.session_state.conversations = conversations
-                st.rerun()
-        
-        # Connection info
-        with st.expander("ℹ️ Connection Details"):
-            st.code(f"API: {API_BASE_URL}")
-            st.caption("Backend connection status")
+        with st.expander("ℹ️ Connection Info"):
+            st.code(API_BASE_URL)
     
     # Main chat interface
     if st.session_state.selected_conversation_id:
@@ -262,38 +233,37 @@ def main():
         if messages:
             st.session_state.messages = messages
         
-        # Display messages in a container with scrolling
-        st.markdown('<div class="message-container">', unsafe_allow_html=True)
+        # Display messages in a container
+        chat_container = st.container()
         
-        if st.session_state.messages:
-            for msg in st.session_state.messages:
-                if msg['sender_type'] == 'user':
-                    with st.chat_message("user", avatar="👤"):
-                        sender_name = msg.get('sender', 'User')
-                        st.write(f"**{sender_name}**")
-                        st.markdown(msg['content'])
-                        st.caption(f"Sent: {msg['sent_time']}")
-                
-                elif msg['sender_type'] == 'system':
-                    with st.chat_message("assistant", avatar="🤖"):
-                        st.write("**AI Assistant**")
-                        st.markdown(msg['content'])
-                        
-                        # Show usage info if available
-                        if msg.get('usage'):
-                            with st.expander("📊 Usage Statistics"):
-                                usage = msg['usage']
-                                col1, col2, col3, col4 = st.columns(4)
-                                col1.metric("Requests", usage.get('requests', 'N/A'))
-                                col2.metric("Request Tokens", usage.get('request_tokens', 'N/A'))
-                                col3.metric("Response Tokens", usage.get('response_tokens', 'N/A'))
-                                col4.metric("Total Tokens", usage.get('total_tokens', 'N/A'))
-                        
-                        st.caption(f"Sent: {msg['sent_time']}")
-        else:
-            st.info("👋 No messages yet. Start a conversation by typing below!")
-        
-        st.markdown('</div>', unsafe_allow_html=True)
+        with chat_container:
+            if st.session_state.messages:
+                for msg in st.session_state.messages:
+                    if msg['sender_type'] == 'user':
+                        with st.chat_message("user", avatar="👤"):
+                            sender_name = msg.get('sender', 'User')
+                            st.write(f"**{sender_name}**")
+                            st.markdown(msg['content'])
+                            st.caption(f"Sent: {msg['sent_time']}")
+                    
+                    elif msg['sender_type'] == 'system':
+                        with st.chat_message("assistant", avatar="🤖"):
+                            st.write("**AI Assistant**")
+                            st.markdown(msg['content'])
+                            
+                            # Show usage info if available
+                            if msg.get('usage'):
+                                with st.expander("📊 Usage Statistics"):
+                                    usage = msg['usage']
+                                    col1, col2, col3, col4 = st.columns(4)
+                                    col1.metric("Requests", usage.get('requests', 'N/A'))
+                                    col2.metric("Request Tokens", usage.get('request_tokens', 'N/A'))
+                                    col3.metric("Response Tokens", usage.get('response_tokens', 'N/A'))
+                                    col4.metric("Total Tokens", usage.get('total_tokens', 'N/A'))
+                            
+                            st.caption(f"Sent: {msg['sent_time']}")
+            else:
+                st.info("👋 No messages yet. Start a conversation by typing below!")
         
         # Chat input at the bottom
         st.markdown("---")

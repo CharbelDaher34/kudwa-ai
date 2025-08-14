@@ -5,17 +5,17 @@ from typing import Optional, Dict, Any
 from sqlmodel import SQLModel, Field
 from sqlalchemy import JSON,Column
 # ==============================================================================
-# GENERIC FINANCIAL REPORTING SCHEMA
+# UNIFIED FINANCIAL REPORTING SCHEMA
 # ==============================================================================
 
 class UnifiedReport(SQLModel, table=True):
     """
-    Stores metadata for a single financial report.
-    Generic schema that can handle any financial data source.
+    Stores metadata for a single financial report, combining fields from
+    both the original 'Report' and 'FinancialStatement' models.
     """
     id: Optional[int] = Field(default=None, primary_key=True)
     
-    # --- Core Report Fields ---
+    # --- Fields from Schema 2 ('Report') ---
     report_name: str = Field(index=True)
     report_basis: str
     start_period: datetime
@@ -23,12 +23,12 @@ class UnifiedReport(SQLModel, table=True):
     currency: Optional[str]
     generated_time: datetime
 
-    # --- Source System Fields ---
-    platform_id: str = Field(description="Source system identifier (e.g., 'quickbooks', 'rootfi', 'sage')")
-    platform_unique_id: Optional[str] = None  # The original ID from the source system
-    company_id: Optional[str] = None  # Generic company identifier from source system
+    # --- Fields from Schema 1 ('FinancialStatement') ---
+    platform_id: str  # To identify the source system (e.g., 'rootfi', 'qbo')
+    platform_unique_id: Optional[str] = None # The original ID from the source system
+    rootfi_company_id: Optional[int] = None # Specific ID if the source is rootfi
     
-    # --- Calculated/Summary Fields ---
+    # --- Calculated/Summary Fields from Schema 1 ---
     # These are kept for quick access but could also be calculated on the fly
     # from the associated accounts.
     gross_profit: Optional[float] = None
@@ -36,13 +36,6 @@ class UnifiedReport(SQLModel, table=True):
     net_profit: Optional[float] = None
     earnings_before_taxes: Optional[float] = None
     taxes: Optional[float] = None
-    
-    # --- Additional Metadata ---
-    extra_data: Dict[str, Any] = Field(
-        default_factory=dict,
-        description="Additional platform-specific metadata",
-        sa_column=Column(JSON)
-    )
     
     # --- Relationships ---
     # A single relationship to a flexible chart of accounts.
@@ -52,33 +45,26 @@ class UnifiedReport(SQLModel, table=True):
 class Account(SQLModel, table=True):
     """
     Represents a single account in the report (e.g., "Revenue", "Software Fees").
-    Generic model that can handle accounts from any financial system.
+    This model replaces all the separate `...Item` tables from Schema 1.
     The hierarchy is self-contained.
     """
     id: Optional[int] = Field(default=None, primary_key=True)
     
-    # --- Core Account Fields ---
+    # --- Fields from Schema 2 ('Account') ---
     name: str
-    # The 'group' field is the key to categorizing financial data generically
+    # The 'group' field is the key to replacing Schema 1's separate tables.
     group: str = Field(description="The financial group, e.g., 'Revenue', 'Cost of Goods Sold', 'Operating Expense'")
     
-    # Source-specific ID (e.g., from QBO, RootFi, or another system)
+    # Source-specific ID (e.g., from QBO or another system)
     source_account_id: Optional[str] = Field(default=None, index=True) 
 
-    # --- Hierarchy Management ---
+    # --- Hierarchy Management (from both schemas) ---
     parent_id: Optional[int] = Field(default=None, foreign_key="account.id")
     parent: Optional["Account"] = Relationship(
         back_populates="children",
         sa_relationship_kwargs={"remote_side": "Account.id"}
     )
     children: List["Account"] = Relationship(back_populates="parent")
-
-    # --- Additional Metadata ---
-    extra_data: Dict[str, Any] = Field(
-        default_factory=dict,
-        description="Additional account-specific metadata from source system",
-        sa_column=Column(JSON)
-    )
 
     # --- Relationship to the main report ---
     report_id: int = Field(foreign_key="unifiedreport.id")
@@ -91,22 +77,14 @@ class Account(SQLModel, table=True):
 class FinancialEntry(SQLModel, table=True):
     """
     Stores a single financial value for a specific account.
-    Generic model that can handle financial data from any source system.
+    This model is more granular than Schema 1's simple 'value' field,
+    which is an advantage.
     """
     id: Optional[int] = Field(default=None, primary_key=True)
     value: float
-    # Date field provides flexibility for different reporting periods
+    # We keep the 'date' field from Schema 2 for granularity. For Schema 1 data,
+    # this could simply be the 'end_period' of the report.
     date: datetime
-    
-    # Optional period classification for different data types
-    period_type: Optional[str] = Field(default="monthly", description="Type of period: 'monthly', 'quarterly', 'yearly', 'total'")
-
-    # --- Additional Metadata ---
-    extra_data: Dict[str, Any] = Field(
-        default_factory=dict,
-        description="Additional entry-specific metadata from source system",
-        sa_column=Column(JSON)
-    )
 
     # --- Relationship to the account ---
     account_id: int = Field(foreign_key="account.id")
