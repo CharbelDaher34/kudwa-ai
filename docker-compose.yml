@@ -19,6 +19,8 @@ services:
       - "8431:8431"  # Streamlit frontend port
     env_file:
       - ./.env
+    environment:
+      DATABASE_URL: postgresql://kudwa:kudwa@db:5432/kudwadb
     depends_on:
       - db
     volumes:

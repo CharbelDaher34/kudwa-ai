@@ -12,10 +12,8 @@ services:
         fromDatabase:
           name: kudwa-postgres
           property: connectionString
-      - key: GEMINI_API_KEY
-        sync: false  # This will need to be set manually in Render dashboard
       - key: GOOGLE_API_KEY
-        sync: false  # This will need to be set manually in Render dashboard
+        sync: True  # This will need to be set manually in Render dashboard
     healthCheckPath: /health
 
   # Frontend Service (Streamlit)
