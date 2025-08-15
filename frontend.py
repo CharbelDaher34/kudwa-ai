@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Optional, List, Dict
 
 # Configuration
-API_BASE_URL = "http://localhost:8430"  # Adjust this to match your FastAPI server
+API_BASE_URL = "http://app:8430"  # Adjust this to match your FastAPI server
 
 st.set_page_config(
     page_title="Financial Data Chat",
@@ -151,8 +151,8 @@ def main():
     
     # Load conversations
     conversations = list_conversations()
-    if conversations:
-        st.session_state.conversations = conversations
+    # API may return an empty list (no conversations). Only treat None as an error.
+    st.session_state.conversations = conversations if conversations is not None else []
     
     # Sidebar for conversations
     with st.sidebar:
@@ -236,8 +236,8 @@ def main():
         with col2:
             if st.button("🔄", help="Refresh Conversations", use_container_width=True):
                 conversations = list_conversations()
-                if conversations:
-                    st.session_state.conversations = conversations
+                # Update the session state even if the list is empty. None indicates an error.
+                st.session_state.conversations = conversations if conversations is not None else []
                 st.rerun()
         
         # Connection info
@@ -248,7 +248,7 @@ def main():
     # Main chat interface
     if st.session_state.selected_conversation_id:
         conv_id = st.session_state.selected_conversation_id
-        
+
         # Get conversation details
         conversation = next((c for c in st.session_state.conversations if c['id'] == conv_id), None)
         if conversation:
@@ -256,12 +256,11 @@ def main():
             st.subheader(f"💬 {topic}")
         else:
             st.subheader(f"💬 Conversation {conv_id}")
-        
-        # Load messages
+
+        # Load messages (note: an empty list means "no messages", which should clear previous messages)
         messages = list_messages(conv_id)
-        if messages:
-            st.session_state.messages = messages
-        
+        st.session_state.messages = messages if messages is not None else []
+
         # Display messages in a container with scrolling
         st.markdown('<div class="message-container">', unsafe_allow_html=True)
         
@@ -333,10 +332,9 @@ def main():
                         sender_name if sender_name else None
                     )
                     if result:
-                        # Refresh messages
+                        # Refresh messages after sending. If API returns an empty list, clear messages.
                         messages = list_messages(conv_id)
-                        if messages:
-                            st.session_state.messages = messages
+                        st.session_state.messages = messages if messages is not None else []
                         st.rerun()
             elif send_button and not user_input.strip():
                 st.warning("Please enter a message before sending.")
