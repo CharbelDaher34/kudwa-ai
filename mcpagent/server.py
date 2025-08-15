@@ -31,12 +31,27 @@ logger = logging.getLogger(__name__)
 
 
 
-# Initialize database inspector
-db_inspector = DatabaseInspector()
-
 # =====================================================================================
 # Utility & Helper Functions
 # =====================================================================================
+
+# Lazy initialization of database inspector
+_db_inspector = None
+
+def get_db_inspector():
+    """Get database inspector instance (lazy initialization)"""
+    global _db_inspector
+    if _db_inspector is None:
+        try:
+            _db_inspector = DatabaseInspector()
+        except Exception as e:
+            logger.warning(f"Failed to initialize database inspector: {e}")
+            # Return a dummy inspector that returns error messages
+            class DummyInspector:
+                def get_schema_text(self):
+                    return f"Error: Database connection failed - {str(e)}"
+            _db_inspector = DummyInspector()
+    return _db_inspector
 
 def _to_markdown(rows: List[Dict[str, Any]]) -> str:
     """Convert list of dict rows into a Markdown table."""
@@ -175,7 +190,7 @@ def query_database(
     try:
         if fetch_schema:
             logger.info("query_database: fetching schema")
-            return db_inspector.get_schema_text()
+            return get_db_inspector().get_schema_text()
 
         if search_account_term:
             logger.info("query_database: searching account names for '%s'", search_account_term)

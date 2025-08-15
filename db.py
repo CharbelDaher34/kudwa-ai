@@ -1,15 +1,39 @@
 #%%
 import os
+import time
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from sqlmodel import SQLModel, Session
 from contextlib import contextmanager
 from dotenv import load_dotenv
 load_dotenv()
+
 # Use environment variable for database URL, with a fallback for local development
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+psycopg2://kudwa:kudwa@db:5432/kudwadb")
 print(f"dbbbb: {DATABASE_URL}")
-engine = create_engine(DATABASE_URL)
+
+def create_engine_with_retry(database_url: str, max_retries: int = 5, retry_delay: int = 2):
+    """Create database engine with retry logic for deployment environments"""
+    for attempt in range(max_retries):
+        try:
+            engine = create_engine(database_url)
+            # Test the connection
+            with engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+            print(f"Database connection successful on attempt {attempt + 1}")
+            return engine
+        except Exception as e:
+            if attempt < max_retries - 1:
+                print(f"Database connection attempt {attempt + 1} failed: {e}")
+                print(f"Retrying in {retry_delay} seconds...")
+                time.sleep(retry_delay)
+            else:
+                print(f"All database connection attempts failed. Last error: {e}")
+                # For deployment, we still return the engine - let the app handle the error
+                # This prevents import-time failures
+                return create_engine(database_url)
+
+engine = create_engine_with_retry(DATABASE_URL)
 
 # Create a configured "Session" class
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

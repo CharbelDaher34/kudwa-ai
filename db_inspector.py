@@ -16,10 +16,25 @@ class DatabaseInspector:
         skip_tables: list of table names to omit from schema output
         distinct_fields: mapping of table -> list of column names for which to fetch DISTINCT values
         """
-        self.engine = create_engine(db_url)
-        self.inspector = inspect(self.engine)
+        self.db_url = db_url
         self.skip_tables = set(skip_tables or [])
         self.distinct_fields = distinct_fields or {}
+        self._engine = None
+        self._inspector = None
+
+    @property
+    def engine(self):
+        """Lazy initialization of database engine"""
+        if self._engine is None:
+            self._engine = create_engine(self.db_url)
+        return self._engine
+
+    @property
+    def inspector(self):
+        """Lazy initialization of database inspector"""
+        if self._inspector is None:
+            self._inspector = inspect(self.engine)
+        return self._inspector
 
     def _is_safe_identifier(self, name: str) -> bool:
         """Basic whitelist check for table/column names (alphanumeric + underscore)."""
@@ -39,50 +54,57 @@ class DatabaseInspector:
             return []
 
     def get_tables_info(self) -> Dict[str, Any]:
-        tables_info = {}
-        for table_name in self.inspector.get_table_names():
-            if table_name in self.skip_tables:
-                continue
+        try:
+            tables_info = {}
+            for table_name in self.inspector.get_table_names():
+                if table_name in self.skip_tables:
+                    continue
 
-            columns = self.inspector.get_columns(table_name)
-            foreign_keys = self.inspector.get_foreign_keys(table_name)
+                columns = self.inspector.get_columns(table_name)
+                foreign_keys = self.inspector.get_foreign_keys(table_name)
 
-            col_info = []
-            col_names = {c['name'] for c in columns}
-            for col in columns:
-                info = {
-                    'name': col['name'],
-                    'type': str(col['type']),
-                    'nullable': col['nullable'],
+                col_info = []
+                col_names = {c['name'] for c in columns}
+                for col in columns:
+                    info = {
+                        'name': col['name'],
+                        'type': str(col['type']),
+                        'nullable': col['nullable'],
+                    }
+                    # Extract description (from COMMENT, set by SQLModel's Field(description=...))
+                    if col.get('comment'):
+                        info['description'] = col['comment']
+
+                    # If user requested distinct values for this table/column, fetch them
+                    if table_name in self.distinct_fields:
+                        requested = self.distinct_fields.get(table_name, [])
+                        if col['name'] in requested:
+                            info['distinct_values'] = self._get_distinct_values(table_name, col['name'])
+
+                    col_info.append(info)
+
+                # Extract relationships
+                relationships = []
+                for fk in foreign_keys:
+                    local_col = fk['constrained_columns'][0]
+                    ref_table = fk['referred_table']
+                    ref_col = fk['referred_columns'][0]
+                    relationships.append({
+                        'from': local_col,
+                        'to': f"{ref_table}.{ref_col}"
+                    })
+
+                tables_info[table_name] = {
+                    'columns': col_info,
+                    'relationships': relationships
                 }
-                # Extract description (from COMMENT, set by SQLModel's Field(description=...))
-                if col.get('comment'):
-                    info['description'] = col['comment']
-
-                # If user requested distinct values for this table/column, fetch them
-                if table_name in self.distinct_fields:
-                    requested = self.distinct_fields.get(table_name, [])
-                    if col['name'] in requested:
-                        info['distinct_values'] = self._get_distinct_values(table_name, col['name'])
-
-                col_info.append(info)
-
-            # Extract relationships
-            relationships = []
-            for fk in foreign_keys:
-                local_col = fk['constrained_columns'][0]
-                ref_table = fk['referred_table']
-                ref_col = fk['referred_columns'][0]
-                relationships.append({
-                    'from': local_col,
-                    'to': f"{ref_table}.{ref_col}"
-                })
-
-            tables_info[table_name] = {
-                'columns': col_info,
-                'relationships': relationships
+            return tables_info
+        except Exception as e:
+            # Return error information that can be useful for debugging
+            return {
+                'error': f"Failed to retrieve database schema: {str(e)}",
+                'db_url_hint': self.db_url[:50] + "..." if len(self.db_url) > 50 else self.db_url
             }
-        return tables_info
 
     def print_select_info(self):
         """Prints schema info useful for writing SELECT queries."""
