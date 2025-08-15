@@ -25,7 +25,7 @@ async def lifespan(app: FastAPI):
     #     conn.exec_driver_sql("CREATE SCHEMA public;")
 
     # Create tables
-    SQLModel.metadata.drop_all(engine)
+    # SQLModel.metadata.drop_all(engine)
 
     SQLModel.metadata.create_all(engine)
 
@@ -45,4 +45,4 @@ app.include_router(router)
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8430, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=8430)#, reload=True)

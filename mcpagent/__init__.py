@@ -2,18 +2,10 @@ import argparse
 import logging
 
 from .server import (
-    get_connection,
-    execute_query,
-    fetch_tables_info,
+
     mcp,
 )
 
-# Optionally expose other important items at package level
-__all__ = [
-    "get_connection",
-    "execute_query", 
-    "fetch_tables_info",
-]
 
 
 def main():

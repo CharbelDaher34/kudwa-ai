@@ -8,45 +8,45 @@ services:
       POSTGRES_DB: flowdb
     ports: ["5437:5432"]
 
-  flow-api:
-    build:
-      context: ./services
-      dockerfile: flow-api/Dockerfile
-    environment: &env
-      DATABASE_URL: postgresql+psycopg2://flow:flow@db/flowdb
-    depends_on: [db]
-    ports: ["8101:8001"]
-    command: uv run app.py
+  # flow-api:
+  #   build:
+  #     context: ./services
+  #     dockerfile: flow-api/Dockerfile
+  #   environment: &env
+  #     DATABASE_URL: postgresql+psycopg2://flow:flow@db/flowdb
+  #   depends_on: [db]
+  #   ports: ["8101:8001"]
+  #   command: uv run app.py
 
-  chat-api:
-    build:
-      context: ./services
-      dockerfile: chat-api/Dockerfile
-    env_file:
-      - ./services/chat-api/.env
-    environment:
-      <<: *env
-    depends_on: [db, flow-api]
-    ports: ["8100:8000"]
-    command: uv run app.py
-  ollama:
-    image: ollama/ollama:latest
-    container_name: ollama-workflow
-    # ports:
-    #   - "11434:11435"  # Correct internal and external port
-    environment:
-      - OLLAMA_HOST=0.0.0.0:11434  # Ensure Ollama binds to correct port
-    volumes:
-      - ./ollama-data:/root/.ollama
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-    entrypoint: ["sh", "-c", "ollama serve & sleep 5 && ollama run phi4-mini:3.8b && tail -f /dev/null"]
-    restart: unless-stopped
+  # chat-api:
+  #   build:
+  #     context: ./services
+  #     dockerfile: chat-api/Dockerfile
+  #   env_file:
+  #     - ./services/chat-api/.env
+  #   environment:
+  #     <<: *env
+  #   depends_on: [db, flow-api]
+  #   ports: ["8100:8000"]
+  #   command: uv run app.py
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   container_name: ollama-workflow
+  #   # ports:
+  #   #   - "11434:11435"  # Correct internal and external port
+  #   environment:
+  #     - OLLAMA_HOST=0.0.0.0:11434  # Ensure Ollama binds to correct port
+  #   volumes:
+  #     - ./ollama-data:/root/.ollama
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: all
+  #             capabilities: [gpu]
+  #   entrypoint: ["sh", "-c", "ollama serve & sleep 5 && ollama run phi4-mini:3.8b && tail -f /dev/null"]
+  #   restart: unless-stopped
 
 
   # flow-frontend:

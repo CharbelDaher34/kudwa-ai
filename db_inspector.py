@@ -1,20 +1,54 @@
-from sqlalchemy import create_engine, inspect
-from typing import Dict, Any
-from sqlalchemy import create_engine, inspect
-from typing import Dict, Any
+#%%
+from sqlalchemy import create_engine, inspect, text
+from typing import Dict, Any, List, Optional
+from db import DATABASE_URL
+
 
 class DatabaseInspector:
-    def __init__(self, db_url: str):
+    def __init__(
+        self,
+        db_url: str = DATABASE_URL,
+        skip_tables: List[str] = ["message", "conversation"],
+        distinct_fields: Dict[str, List[str]] = {"financialstatement": ["account_name"]}
+    ):
+        """
+        db_url: database URL
+        skip_tables: list of table names to omit from schema output
+        distinct_fields: mapping of table -> list of column names for which to fetch DISTINCT values
+        """
         self.engine = create_engine(db_url)
         self.inspector = inspect(self.engine)
+        self.skip_tables = set(skip_tables or [])
+        self.distinct_fields = distinct_fields or {}
+
+    def _is_safe_identifier(self, name: str) -> bool:
+        """Basic whitelist check for table/column names (alphanumeric + underscore)."""
+        return bool(name) and all(ch.isalnum() or ch == "_" for ch in name)
+
+    def _get_distinct_values(self, table: str, column: str) -> List[Any]:
+        """Return distinct values for table.column, empty list on error or if unsafe identifier."""
+        if not (self._is_safe_identifier(table) and self._is_safe_identifier(column)):
+            return []
+        query = f"SELECT DISTINCT {column} FROM {table}"
+        try:
+            with self.engine.connect() as conn:
+                result = conn.execute(text(query))
+                rows = result.fetchall()
+                return [row[0] for row in rows]
+        except Exception:
+            return []
 
     def get_tables_info(self) -> Dict[str, Any]:
         tables_info = {}
         for table_name in self.inspector.get_table_names():
+            if table_name in self.skip_tables:
+                continue
+
             columns = self.inspector.get_columns(table_name)
             foreign_keys = self.inspector.get_foreign_keys(table_name)
 
             col_info = []
+            col_names = {c['name'] for c in columns}
             for col in columns:
                 info = {
                     'name': col['name'],
@@ -24,6 +58,13 @@ class DatabaseInspector:
                 # Extract description (from COMMENT, set by SQLModel's Field(description=...))
                 if col.get('comment'):
                     info['description'] = col['comment']
+
+                # If user requested distinct values for this table/column, fetch them
+                if table_name in self.distinct_fields:
+                    requested = self.distinct_fields.get(table_name, [])
+                    if col['name'] in requested:
+                        info['distinct_values'] = self._get_distinct_values(table_name, col['name'])
+
                 col_info.append(info)
 
             # Extract relationships
@@ -53,6 +94,10 @@ class DatabaseInspector:
                 null = "NULL" if col['nullable'] else "NOT NULL"
                 desc = f" → {col['description']}" if 'description' in col else ""
                 print(f"    • {col['name']} ({col['type']}, {null}){desc}")
+                if 'distinct_values' in col:
+                    vals = col['distinct_values']
+                    sample = vals[:10]  # show up to 10 values
+                    print(f"       ↳ distinct ({len(vals)}): {sample}")
 
             if data['relationships']:
                 print("  🔗 Relationships:")
@@ -68,7 +113,11 @@ class DatabaseInspector:
             for col in data['columns']:
                 null = "NULL" if col['nullable'] else "NOT NULL"
                 desc = f" - {col['description']}" if 'description' in col else ""
-                lines.append(f"    {col['name']} ({col['type']}, {null}){desc}")
+                line = f"    {col['name']} ({col['type']}, {null}){desc}"
+                lines.append(line)
+                if 'distinct_values' in col:
+                    vals = col['distinct_values']
+                    lines.append(f"      Distinct values ({len(vals)}): {vals}")
 
             if data['relationships']:
                 lines.append("  Relationships:")
@@ -76,15 +125,21 @@ class DatabaseInspector:
                     lines.append(f"    {rel['from']} → {rel['to']}")
             lines.append("")  # Blank line between tables
         return "\n".join(lines)
+#%%
 # Example usage:
 if __name__ == "__main__":
-    from db import DATABASE_URL
-
     
+    from db import DATABASE_URL
     try:
-        inspector = DatabaseInspector(DATABASE_URL)
+        # skip messages and conversation tables, and request distinct account_name values
+        inspector = DatabaseInspector(
+            DATABASE_URL,
+            skip_tables=["message", "conversation"],
+            distinct_fields={"financialstatement": ["account_name"]},
+        )
 
         # Print schema information
-        inspector.print_select_info()
+        print(inspector.get_schema_text())
     except Exception as e:
         print(f"Error: {e}")
+# %%

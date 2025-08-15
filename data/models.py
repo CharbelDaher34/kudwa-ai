@@ -97,7 +97,7 @@ class FinancialStatement(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     period: date  # First day of the reporting period
     account_id: str = Field(index=True)
-    account_name: str
+    account_name: str = Field(index=True, description="Name of the financial transaction")
     amount: float
     parent_account_id: Optional[str] = None
 

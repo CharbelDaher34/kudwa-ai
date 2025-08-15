@@ -8,7 +8,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, select
 from data.models import Conversation, Message
-from tomato.client import FinancialDataChat
+from mcpagent.client import FinancialDataChat
 from typing import List, Optional
 import asyncio
 from db import get_session
