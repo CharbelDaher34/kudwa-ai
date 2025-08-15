@@ -6,7 +6,14 @@ from datetime import datetime
 from typing import Optional, List, Dict
 
 # Configuration
-API_BASE_URL = os.getenv("API_BASE_URL", "http://app:8430")  # Use environment variable for API URL
+api_host = os.getenv("API_BASE_URL", "app:8430")
+# Ensure the API URL has the proper protocol
+if api_host.startswith("http://") or api_host.startswith("https://"):
+    API_BASE_URL = api_host
+else:
+    # For Render deployment, use https, for local development use http
+    protocol = "https" if "onrender.com" in api_host else "http"
+    API_BASE_URL = f"{protocol}://{api_host}"
 
 st.set_page_config(
     page_title="Financial Data Chat",
