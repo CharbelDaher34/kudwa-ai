@@ -1,284 +1,308 @@
 import json
-from pathlib import Path
-from sqlmodel import SQLModel, Session, select
-from data.models import UnifiedReport, Account, FinancialEntry # Assumes you saved the new models in data/unified_models.py
-from db import engine, get_db_session
-from typing import Optional, List, Dict
-from datetime import datetime
-from sqlmodel import SQLModel, Session, select, func
+import sqlite3
+from datetime import datetime, date
+from typing import Dict, List, Any, Optional
+import os
+from sqlmodel import SQLModel, create_engine, Session, Field
+from data.models import FinancialStatement
+# Define our simplified database model
 
-# --- Constants for Standardizing Account Groups ---
-# Using standard group names makes querying consistent across data sources.
-GROUP_REVENUE = "Income"
-GROUP_COGS = "Cost of Goods Sold"
-GROUP_OPEX = "Operating Expense"
-GROUP_NON_OP_REVENUE = "Non-Operating Revenue"
-GROUP_NON_OP_EXPENSE = "Non-Operating Expense"
-GROUP_OTHER = "Other"
 
-# ==============================================================================
-# INGESTION LOGIC FOR data_set_2.json (rootfi)
-# ==============================================================================
+def parse_first_file_format(file_path: str) -> List[Dict[str, Any]]:
+    """Parse the first file format (QuickBooks-like column-based format)"""
+    with open(file_path, 'r') as f:
+        data = json.load(f)
+    
+    results = []
+    
+    # Extract column metadata to map column positions to dates
+    columns = data["data"]["Columns"]["Column"]
+    # Skip the first column (account names), start from index 1
+    month_columns = columns[1:]
+    
+    # Helper: recursively walk nested Row structures and yield rows of type "Data"
+    def walk_rows(row_list):
+        for r in row_list:
+            if r.get("type") == "Data":
+                yield r
+            # nested rows may appear under r.get("Rows") which can be a dict with key "Row"
+            nested = r.get("Rows") or {}
+            nested_rows = None
+            if isinstance(nested, dict):
+                nested_rows = nested.get("Row")
+            elif isinstance(nested, list):
+                nested_rows = nested
 
-def _create_accounts_from_rootfi_items(
-    session: Session,
-    items_data: List[Dict],
-    group_name: str,
-    report_id: int,
-    report_end_date: datetime,
-    parent_id: Optional[int] = None,
-):
-    """
-    Recursively processes a list of items from the rootfi data, creating
-    unified Account and FinancialEntry records.
-    """
-    for item_data in items_data:
-        if not isinstance(item_data, dict):
+            if nested_rows:
+                # nested_rows can be a single dict or a list
+                if isinstance(nested_rows, dict):
+                    yield from walk_rows([nested_rows])
+                else:
+                    yield from walk_rows(nested_rows)
+
+    # Start from top-level rows (may be a list)
+    top_rows = data["data"].get("Rows", {}).get("Row", [])
+    if isinstance(top_rows, dict):
+        top_rows = [top_rows]
+
+    # Process each data row (recursively found)
+    for row in walk_rows(top_rows):
+        coldata = row.get("ColData", [])
+        if not coldata:
             continue
 
-        # 1. Create the Account record
-        new_account = Account(
-            name=item_data.get("name", "Unnamed Account"),
-            group=group_name,
-            source_account_id=item_data.get("account_id"),
-            report_id=report_id,
-            parent_id=parent_id,
-        )
-        session.add(new_account)
-        session.flush()  # Assigns an ID to new_account for linking
+        # Extract account ID and name safely
+        first_col = coldata[0]
+        account_id = first_col.get("id") or first_col.get("account_id") or first_col.get("value")
+        account_name = first_col.get("value") or first_col.get("name") or ""
 
-        # 2. Create the corresponding FinancialEntry record
-        # rootfi data provides one value for the whole period, so we use the report's end_date
-        value = item_data.get("value", 0.0)
-        if value != 0:  # Only create entries for non-zero values
-            entry = FinancialEntry(
-                value=value,
-                date=report_end_date,
-                account_id=new_account.id,
-            )
-            session.add(entry)
-
-        # 3. Recurse for any nested child items
-        if child_items := item_data.get("line_items"):
-            _create_accounts_from_rootfi_items(
-                session, child_items, group_name, report_id, report_end_date, parent_id=new_account.id
-            )
-
-def ingest_rootfi_data(session: Session, data_path: Path):
-    """Parses and ingests financial data from the rootfi JSON file."""
-    print(f"📄 Loading rootfi data from {data_path}...")
-    with open(data_path, 'r') as f:
-        financial_records = json.load(f).get("data", [])
-
-    print(f"📊 Found {len(financial_records)} financial records to ingest from rootfi.")
-
-    for record_data in financial_records:
-        try:
-            # Skip records that don't have essential fields
-            if not record_data.get("period_end") or not record_data.get("period_start") or not record_data.get("rootfi_updated_at"):
+        # Process each month's value and map to month_columns (be defensive about lengths)
+        for i, col_data in enumerate(coldata[1:]):  # Skip first column
+            val = col_data.get("value")
+            if val is None or val == "":
                 continue
-                
-            # 1. Create the UnifiedReport for this record
-            report_end_date = datetime.fromisoformat(record_data["period_end"])
-            report = UnifiedReport(
-                report_name=f"Financial Statement - {record_data['period_start']} to {record_data['period_end']}",
-                report_basis="Unknown", # Not provided in this data source
-                start_period=datetime.fromisoformat(record_data["period_start"]),
-                end_period=report_end_date,
-                currency=record_data.get("currency_id") or "USD",
-                generated_time=datetime.fromisoformat(record_data["rootfi_updated_at"]),
-                platform_id="rootfi",  # Static identifier for this data source
-                platform_unique_id=str(record_data.get("rootfi_id")) if record_data.get("rootfi_id") else None,
-                rootfi_company_id=record_data.get("rootfi_company_id"),
-                gross_profit=record_data.get("gross_profit"),
-                operating_profit=record_data.get("operating_profit"),
-                net_profit=record_data.get("net_profit"),
-                earnings_before_taxes=record_data.get("earnings_before_taxes"),
-                taxes=record_data.get("taxes"),
+
+            try:
+                amount = float(str(val).replace(",", ""))
+            except (ValueError, TypeError):
+                # skip values that aren't numeric
+                continue
+
+            # Determine period from corresponding month column metadata; be defensive
+            period = None
+            try:
+                col_meta = month_columns[i] if i < len(month_columns) else None
+                if col_meta:
+                    meta_list = col_meta.get("MetaData", []) or []
+                    for meta in meta_list:
+                        if isinstance(meta, dict) and meta.get("Value"):
+                            period = datetime.strptime(meta["Value"], "%Y-%m-%d").date()
+                            break
+            except Exception:
+                period = None
+
+            # Fallback: try parsing "ColTitle" like "Jan 2020" into first-of-month
+            if period is None:
+                try:
+                    col_title = month_columns[i].get("ColTitle", "") if i < len(month_columns) else ""
+                    if col_title:
+                        try:
+                            dt = datetime.strptime(col_title, "%b %Y")
+                            period = date(dt.year, dt.month, 1)
+                        except Exception:
+                            period = None
+                except Exception:
+                    period = None
+
+            if period is None:
+                # can't map this column to a period; skip
+                continue
+
+            results.append({
+                "period": period,
+                "account_id": account_id,
+                "account_name": account_name,
+                "amount": amount,
+                "parent_account_id": None  # First format doesn't explicitly show hierarchy
+            })
+    
+    return results
+
+def extract_line_items(line_items: List[Dict], parent_account_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Recursively extract line items from the hierarchical structure"""
+    results = []
+    
+    for item in line_items:
+        current_id = item.get("account_id")
+        results.append({
+            "period": None,  # Will be filled in later
+            "account_id": current_id,
+            "account_name": item["name"],
+            "amount": item["value"],
+            "parent_account_id": parent_account_id
+        })
+        
+        # Process nested line items
+        if "line_items" in item and item["line_items"]:
+            results.extend(extract_line_items(item["line_items"], current_id))
+    
+    return results
+
+def parse_second_file_format(file_path: str) -> List[Dict[str, Any]]:
+    """Parse the second file format (hierarchical JSON with account IDs)"""
+    with open(file_path, 'r') as f:
+        data = json.load(f)
+    
+    results = []
+    
+    for entry in data["data"]:
+        # Extract period start date
+        period_start = datetime.strptime(entry["period_start"], "%Y-%m-%d").date()
+        
+        # Process revenue
+        for revenue_section in entry["revenue"]:
+            results.append({
+                "period": period_start,
+                "account_id": revenue_section.get("account_id", revenue_section["name"].replace(" ", "_").lower()),
+                "account_name": revenue_section["name"],
+                "amount": revenue_section["value"],
+                "parent_account_id": None
+            })
+            
+            if "line_items" in revenue_section:
+                line_items = extract_line_items(revenue_section["line_items"], 
+                                              revenue_section.get("account_id"))
+                for item in line_items:
+                    item["period"] = period_start
+                    results.append(item)
+        
+        # Process cost of goods sold
+        for cogs_section in entry["cost_of_goods_sold"]:
+            results.append({
+                "period": period_start,
+                "account_id": cogs_section.get("account_id", cogs_section["name"].replace(" ", "_").lower()),
+                "account_name": cogs_section["name"],
+                "amount": cogs_section["value"],
+                "parent_account_id": None
+            })
+            
+            if "line_items" in cogs_section and cogs_section["line_items"]:
+                line_items = extract_line_items(cogs_section["line_items"], 
+                                              cogs_section.get("account_id"))
+                for item in line_items:
+                    item["period"] = period_start
+                    results.append(item)
+        
+        # Process operating expenses
+        for expense_section in entry["operating_expenses"]:
+            results.append({
+                "period": period_start,
+                "account_id": expense_section.get("account_id", expense_section["name"].replace(" ", "_").lower()),
+                "account_name": expense_section["name"],
+                "amount": expense_section["value"],
+                "parent_account_id": None
+            })
+            
+            if "line_items" in expense_section:
+                line_items = extract_line_items(expense_section["line_items"], 
+                                              expense_section.get("account_id"))
+                for item in line_items:
+                    item["period"] = period_start
+                    results.append(item)
+        
+        # Process non-operating revenue
+        for non_op_rev in entry["non_operating_revenue"]:
+            results.append({
+                "period": period_start,
+                "account_id": non_op_rev.get("account_id", non_op_rev["name"].replace(" ", "_").lower()),
+                "account_name": non_op_rev["name"],
+                "amount": non_op_rev["value"],
+                "parent_account_id": None
+            })
+            
+            if "line_items" in non_op_rev and non_op_rev["line_items"]:
+                line_items = extract_line_items(non_op_rev["line_items"], 
+                                              non_op_rev.get("account_id"))
+                for item in line_items:
+                    item["period"] = period_start
+                    results.append(item)
+        
+        # Process non-operating expenses
+        for non_op_exp in entry["non_operating_expenses"]:
+            results.append({
+                "period": period_start,
+                "account_id": non_op_exp.get("account_id", non_op_exp["name"].replace(" ", "_").lower()),
+                "account_name": non_op_exp["name"],
+                "amount": non_op_exp["value"],
+                "parent_account_id": None
+            })
+            
+            if "line_items" in non_op_exp and non_op_exp["line_items"]:
+                line_items = extract_line_items(non_op_exp["line_items"], 
+                                              non_op_exp.get("account_id"))
+                for item in line_items:
+                    item["period"] = period_start
+                    results.append(item)
+        
+        # Add gross profit as a top-level metric
+        if entry["gross_profit"] is not None:
+            results.append({
+                "period": period_start,
+                "account_id": "gross_profit",
+                "account_name": "Gross Profit",
+                "amount": entry["gross_profit"],
+                "parent_account_id": None
+            })
+        
+        # Add operating profit as a top-level metric
+        if entry["operating_profit"] is not None:
+            results.append({
+                "period": period_start,
+                "account_id": "operating_profit",
+                "account_name": "Operating Profit",
+                "amount": entry["operating_profit"],
+                "parent_account_id": None
+            })
+        
+        # Add net profit as a top-level metric
+        if entry["net_profit"] is not None:
+            results.append({
+                "period": period_start,
+                "account_id": "net_profit",
+                "account_name": "Net Profit",
+                "amount": entry["net_profit"],
+                "parent_account_id": None
+            })
+    
+    return results
+
+def save_to_database(records: List[Dict[str, Any]]):
+    """Save parsed records to SQLite database"""
+    from db import get_db_session
+    
+    # Insert data using the context manager provided by get_db_session()
+    with get_db_session() as session:
+        for record in records:
+            # Convert date objects to strings for JSON serialization if needed
+            db_record = FinancialStatement(
+                period=record["period"],
+                account_id=record["account_id"],
+                account_name=record["account_name"],
+                amount=record["amount"],
+                parent_account_id=record["parent_account_id"]
             )
-            session.add(report)
-            session.flush()  # Get the ID for linking accounts
+            session.add(db_record)
 
-            # 2. Process each section, mapping it to the unified Account model
-            item_mapping = {
-                "revenue": GROUP_REVENUE,
-                "cost_of_goods_sold": GROUP_COGS,
-                "operating_expenses": GROUP_OPEX,
-                "non_operating_revenue": GROUP_NON_OP_REVENUE,
-                "non_operating_expenses": GROUP_NON_OP_EXPENSE,
-            }
-
-            for json_key, group_name in item_mapping.items():
-                if items_data := record_data.get(json_key):
-                    if isinstance(items_data, list) and len(items_data) > 0:
-                        _create_accounts_from_rootfi_items(
-                            session, items_data, group_name, report.id, report.end_period
-                        )
-        except Exception as e:
-            print(f"❌ Error ingesting rootfi record: {e}")
+        # commit here (context manager will also commit after yield)
+        try:
+            session.commit()
+        except Exception:
             session.rollback()
+            raise
 
-# ==============================================================================
-# INGESTION LOGIC FOR data_set_1.json (QBO)
-# ==============================================================================
-
-def _create_accounts_from_qbo_rows(
-    session: Session,
-    rows: List[dict],
-    report_id: int,
-    date_map: Dict[int, datetime],
-    accounts_cache: Dict[str, Account],
-    parent_account: Optional[Account] = None,
-    parent_group: Optional[str] = None,
-):
-    """Recursively processes rows from QBO data to create unified Account and FinancialEntry records."""
-    for row_data in rows:
-        # Get ColData from Header, Summary, or the row itself
-        col_data = None
-        if 'Header' in row_data and 'ColData' in row_data['Header']:
-            col_data = row_data['Header']['ColData']
-        elif 'Summary' in row_data and 'ColData' in row_data['Summary']:
-            col_data = row_data['Summary']['ColData']
-        elif 'ColData' in row_data:
-            col_data = row_data['ColData']
-            
-        if not col_data or not isinstance(col_data, list) or len(col_data) == 0:
-            # Process child rows even if current row has no ColData
-            if 'Rows' in row_data and 'Row' in row_data['Rows']:
-                _create_accounts_from_qbo_rows(
-                    session, row_data['Rows']['Row'], report_id, date_map, accounts_cache, parent_account, parent_group
-                )
-            continue
-
-        account_info = col_data[0]
-        source_id = account_info.get('id')
-        account_name = account_info.get('value', 'Unnamed Account')
-        
-        # Skip if there's no account name
-        if not account_name or account_name.strip() == '':
-            continue
-            
-        current_group = row_data.get('group', parent_group) or GROUP_OTHER
-        current_account = parent_account
-
-        if source_id:
-            if source_id not in accounts_cache:
-                new_account = Account(
-                    source_account_id=source_id,
-                    name=account_name,
-                    group=current_group,
-                    report_id=report_id,
-                    parent_id=parent_account.id if parent_account else None
-                )
-                session.add(new_account)
-                session.flush()
-                accounts_cache[source_id] = new_account
-            
-            current_account = accounts_cache[source_id]
-
-            # Create FinancialEntry records for each time-based column
-            for i, cell in enumerate(col_data):
-                if i in date_map and cell.get('value'):
-                    try:
-                        value = float(cell['value'])
-                        if value != 0:  # Only create entries for non-zero values
-                            entry = FinancialEntry(
-                                date=date_map[i],
-                                value=value,
-                                account_id=current_account.id
-                            )
-                            session.add(entry)
-                    except (ValueError, TypeError):
-                        # Skip invalid values
-                        continue
-        
-        # Recurse for child rows
-        if 'Rows' in row_data and 'Row' in row_data['Rows']:
-            _create_accounts_from_qbo_rows(
-                session, row_data['Rows']['Row'], report_id, date_map, accounts_cache, current_account, current_group
-            )
-
-def ingest_qbo_data(session: Session, data_path: Path):
-    """Parses and ingests financial data from the QBO-style JSON file."""
-    print(f"📄 Loading QBO data from {data_path}...")
-    with open(data_path, 'r') as f:
-        data = json.load(f)['data']
-
-    # 1. Create the UnifiedReport
-    header = data['Header']
-    report = UnifiedReport(
-        report_name=header['ReportName'],
-        report_basis=header['ReportBasis'],
-        start_period=datetime.fromisoformat(header['StartPeriod']),
-        end_period=datetime.fromisoformat(header['EndPeriod']),
-        currency=header['Currency'],
-        generated_time=datetime.fromisoformat(header['Time']),
-        platform_id="qbo" # Hardcode the platform for this source
-    )
-    session.add(report)
-    session.commit() # Commit here to get the final ID and ensure it exists
-    session.refresh(report)
-    print(f"📊 Created Report '{report.report_name}' with ID: {report.id}")
-
-    # 2. Prepare column-to-date mapping
-    date_map = {}
-    for i, col in enumerate(data['Columns']['Column']):
-        if i > 0:  # Skip the first column (Account column)
-            meta_data = col.get('MetaData', [])
-            end_date_meta = next((m for m in meta_data if m['Name'] == 'EndDate'), None)
-            if end_date_meta:
-                date_map[i] = datetime.fromisoformat(end_date_meta['Value'])
-
-    # 3. Process all rows to create Accounts and Entries
-    _create_accounts_from_qbo_rows(session, data['Rows']['Row'], report.id, date_map, accounts_cache={})
-
-# ==============================================================================
-# MAIN EXECUTION AND VERIFICATION
-# ==============================================================================
-
-def verify_data(session: Session):
-    """Runs a few queries to verify that data was ingested correctly."""
-    print("\n" + "="*20 + " VERIFICATION " + "="*20)
-    
-    report_count = session.exec(select(func.count(UnifiedReport.id))).one()
-    account_count = session.exec(select(func.count(Account.id))).one()
-    entry_count = session.exec(select(func.count(FinancialEntry.id))).one()
-    
-    print(f"✅ Total Reports in DB: {report_count}")
-    print(f"✅ Total Accounts in DB: {account_count}")
-    print(f"✅ Total Financial Entries in DB: {entry_count}")
-
-    if entry_count > 0:
-        # Example query: Get total income across all reports
-        total_income_result = session.exec(
-            select(func.sum(FinancialEntry.value))
-            .join(Account)
-            .where(Account.group == GROUP_REVENUE)
-        ).one_or_none()
-        total_income = total_income_result or 0
-        print(f"💰 Total Combined Income (from all sources): ${total_income:,.2f}")
 
 def main():
-    """Main function to clear DB and handle data ingestion from all sources."""
-    print("🚀 Starting Data Ingestion to Unified Schema...")
+    # Paths to your JSON files
+    first_file_path = "AI Engineer x Kudwa Take-Home Test 24a14e124c6780a68e6cdcdeb5442fdf/data_set_1.json"
+    second_file_path = "AI Engineer x Kudwa Take-Home Test 24a14e124c6780a68e6cdcdeb5442fdf/data_set_2.json"
     
-
-    data_dir = Path("AI Engineer x Kudwa Take-Home Test 24a14e124c6780a68e6cdcdeb5442fdf")
+    # Parse both files
+    print("Parsing first file format...")
+    first_file_records = parse_first_file_format(first_file_path)
+    print(f"Parsed {len(first_file_records)} records from the first file.")
     
-    with get_db_session() as session:
-        # Ingest data from the first file
-        ingest_qbo_data(session, data_dir / "data_set_1.json")
-        
-        # Ingest data from the second file
-        ingest_rootfi_data(session, data_dir / "data_set_2.json")
-        
-        print("\nCommitting all transactions...")
-        session.commit()
-        
-        # Run verification queries on the combined data
-        verify_data(session)
-
-    print("\n🎉 Ingestion process complete!")
+    print("Parsing second file format...")
+    second_file_records = parse_second_file_format(second_file_path)
+    print(f"Parsed {len(second_file_records)} records from the second file.")
+    
+    # Combine records
+    all_records = first_file_records + second_file_records
+    
+    # Save to database
+    print(f"Total records to insert: {len(all_records)}")
+    save_to_database(all_records)
+    
+    print("Data ingestion completed successfully!")
 
 if __name__ == "__main__":
     main()

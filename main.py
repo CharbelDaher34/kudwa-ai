@@ -25,6 +25,8 @@ async def lifespan(app: FastAPI):
     #     conn.exec_driver_sql("CREATE SCHEMA public;")
 
     # Create tables
+    SQLModel.metadata.drop_all(engine)
+
     SQLModel.metadata.create_all(engine)
 
     # Startup phase
