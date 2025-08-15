@@ -10,16 +10,29 @@ from dotenv import load_dotenv
 if os.getenv("RENDER") is None:
     load_dotenv()
 
-# Use environment variable for database URL, with a fallback for local development
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+psycopg2://kudwa:kudwa@db:5432/kudwadb")
-print(f"DATABASE_URL used: {DATABASE_URL}")
+# Resolve DATABASE_URL with environment-aware fallback
+RAW_DATABASE_URL = os.getenv("DATABASE_URL")
+
+if RAW_DATABASE_URL:
+    DATABASE_URL = RAW_DATABASE_URL
+else:
+    # Only allow docker-compose fallback when clearly not on Render
+    if os.getenv("RENDER"):
+        raise RuntimeError(
+            "DATABASE_URL is not set in environment. Render should inject it from the managed database. "
+            "Verify render.yaml envVars for the backend service and that the deploy includes the database resource."
+        )
+    DATABASE_URL = "postgresql+psycopg2://kudwa:kudwa@db:5432/kudwadb"
+    print("DATABASE_URL not set. Using local docker-compose fallback.")
+
+print(f"Initial DATABASE_URL value: {DATABASE_URL}")
 
 # Render's postgres service provides a URL that starts with postgresql://
 # but psycopg2 (SQLAlchemy's default driver) requires postgresql+psycopg2://.
 # We will adjust the URL scheme if it's a Render-provided URL.
-if DATABASE_URL and DATABASE_URL.startswith("postgresql://"):
+if DATABASE_URL.startswith("postgresql://") and "+psycopg2" not in DATABASE_URL:
     DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg2://", 1)
-    print(f"Adjusted DATABASE_URL for psycopg2: {DATABASE_URL}")
+    print(f"Adjusted scheme for psycopg2: {DATABASE_URL}")
 
 engine = create_engine(DATABASE_URL)
 
