@@ -12,7 +12,8 @@ from pydantic_ai.messages import (
     FunctionToolResultEvent,
 )
 from pydantic_ai.exceptions import UserError
-
+import os
+os.environ["GOOGLE_API_KEY"]="AIzaSyAsr9OJhukEP9vKjUd1NI8Rgbd-M5uTkHk`"
 try:
     # Ensure repo root is importable so we can load db_inspector and db
     repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
