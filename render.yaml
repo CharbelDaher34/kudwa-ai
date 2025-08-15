@@ -31,7 +31,7 @@ services:
         fromService:
           type: web
           name: kudwa-backend
-          property: url
+          property: host
 
 databases:
   - name: kudwa-postgres
