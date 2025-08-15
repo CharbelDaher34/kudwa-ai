@@ -1,11 +1,12 @@
 import streamlit as st
 import requests
 import json
+import os
 from datetime import datetime
 from typing import Optional, List, Dict
 
 # Configuration
-API_BASE_URL = "http://app:8430"  # Adjust this to match your FastAPI server
+API_BASE_URL = os.getenv("API_BASE_URL", "http://app:8430")  # Use environment variable for API URL
 
 st.set_page_config(
     page_title="Financial Data Chat",

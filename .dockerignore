@@ -1,2 +1,53 @@
-venv
+# Version control
+.git
+.gitignore
+
+# Python cache files
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+.coverage
+
+# Virtual environments
 .venv
+venv/
+ENV/
+
+# IDE files
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Docker files (avoid recursion)
+Dockerfile*
+docker-compose*
+
+# Environment files (these should be set via Render environment variables)
+.env*
+
+# Documentation
+*.md
+!README.md
+
+# Test files
+test_*
+tests/
+
+# Temporary files
+tmp/
+temp/
+
+# Node modules (if any)
+node_modules/

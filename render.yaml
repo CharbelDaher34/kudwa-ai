@@ -1,0 +1,46 @@
+services:
+  # Backend API Service (FastAPI)
+  - type: web
+    name: kudwa-backend
+    runtime: docker
+    dockerfilePath: ./Dockerfile.backend
+    plan: starter
+    buildCommand: echo "Build complete"
+    startCommand: uv run uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PORT
+        value: 8430
+      - key: DATABASE_URL
+        fromDatabase:
+          name: kudwa-postgres
+          property: connectionString
+      - key: OPENAI_API_KEY
+        sync: false  # This will need to be set manually in Render dashboard
+      - key: GEMINI_API_KEY
+        sync: false  # This will need to be set manually in Render dashboard
+      - key: GOOGLE_API_KEY
+        sync: false  # This will need to be set manually in Render dashboard
+    healthCheckPath: /health
+
+  # Frontend Service (Streamlit)
+  - type: web
+    name: kudwa-frontend
+    runtime: docker
+    dockerfilePath: ./Dockerfile.frontend
+    plan: starter
+    buildCommand: echo "Build complete"
+    startCommand: streamlit run frontend.py --server.port $PORT --server.address 0.0.0.0 --server.enableCORS false --server.enableXsrfProtection false
+    envVars:
+      - key: PORT
+        value: 8431
+      - key: API_BASE_URL
+        fromService:
+          type: web
+          name: kudwa-backend
+          property: hostWithProtocol
+
+databases:
+  - name: kudwa-postgres
+    databaseName: kudwadb
+    user: kudwa
+    plan: starter

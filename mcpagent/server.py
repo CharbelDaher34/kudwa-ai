@@ -14,7 +14,7 @@ from mcp.server.fastmcp import FastMCP
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import our database and inspection utilities
-from db import get_db_session, DATABASE_URL
+from db import get_db_session
 from db_inspector import DatabaseInspector
 
 # Load environment variables
@@ -29,11 +29,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Constants
-MAX_LONG_DATA = 1000
+
 
 # Initialize database inspector
-db_inspector = DatabaseInspector(DATABASE_URL)
+db_inspector = DatabaseInspector()
 
 # =====================================================================================
 # Utility & Helper Functions

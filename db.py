@@ -7,8 +7,8 @@ from contextlib import contextmanager
 from dotenv import load_dotenv
 load_dotenv()
 # Use environment variable for database URL, with a fallback for local development
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+psycopg2://flow:flow@localhost:5437/flowdb")
-print(DATABASE_URL)
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+psycopg2://kudwa:kudwa@db:5432/kudwadb")
+print(f"dbbbb: {DATABASE_URL}")
 engine = create_engine(DATABASE_URL)
 
 # Create a configured "Session" class

@@ -1,0 +1,28 @@
+FROM python:3.13-slim
+
+# Copy the uv package manager
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+WORKDIR /app
+
+# Copy requirements first for better caching
+COPY pyproject.toml .
+COPY uv.lock .
+
+# Create virtual environment and install packages
+ENV VIRTUAL_ENV=/app/.venv
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+
+# Install dependencies and sync the virtual environment
+RUN uv venv && \
+    uv lock && \
+    uv sync --locked
+
+# Copy application files
+COPY . .
+
+# Expose port
+EXPOSE 8431
+
+# Start only the frontend service
+CMD ["streamlit", "run", "frontend.py", "--server.port", "8431", "--server.address", "0.0.0.0", "--server.enableCORS", "false", "--server.enableXsrfProtection", "false"]
