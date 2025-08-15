@@ -183,20 +183,11 @@ The web interface provides an intuitive chat-based experience for financial data
 ## Known Issues and Limitations
 
 **Current Limitations:**
-- PostgreSQL connection required for full functionality
-- MCP server needs specific Python environment setup
-- API rate limits dependent on Gemini API quotas
-- Limited to read-only database operations for security
-
-**Scalability Considerations:**
-- Database connection pooling may need tuning for high concurrency
-- LLM response times can vary based on query complexity
-- Docker memory limits should be adjusted for production use
+- **Free Text Account Names**: Account names are stored as unstructured text, making precise querying challenging. The system relies on fuzzy search and keyword matching, which may miss semantically related accounts with different naming conventions.
 
 **Development Notes:**
 - Ingestion runs automatically on empty database detection
 - Conversation history maintained for context but may grow large over time
-- Error handling focuses on graceful degradation rather than strict validation
 
 ---
 
