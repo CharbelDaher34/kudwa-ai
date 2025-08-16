@@ -193,8 +193,9 @@ def main():
         if st.session_state.conversations:
             st.markdown("**📝 Your Conversations:**")
             for conv in st.session_state.conversations:
-                topic = conv.get('topic', f"Chat {conv['id']}")
-                if len(topic) > 25:
+                # Some conversations may have a topic key whose value is None. Fallback to generic label.
+                topic = conv.get('topic') or f"Chat {conv['id']}"
+                if isinstance(topic, str) and len(topic) > 25:
                     topic = topic[:22] + "..."
                 
                 # Check if this is the selected conversation
@@ -256,7 +257,7 @@ def main():
         # Get conversation details
         conversation = next((c for c in st.session_state.conversations if c['id'] == conv_id), None)
         if conversation:
-            topic = conversation.get('topic', f"Conversation {conv_id}")
+            topic = conversation.get('topic') or f"Conversation {conv_id}"
             st.subheader(f"💬 {topic}")
         else:
             st.subheader(f"💬 Conversation {conv_id}")
