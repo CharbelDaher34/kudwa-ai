@@ -1,27 +1,21 @@
 import os
 import sys
 import logging
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, Optional, List, Tuple
 import json
 import re
 from functools import lru_cache
 from difflib import get_close_matches
+from datetime import date
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
 
 # Add parent directory to path to import local modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Optional DB imports (lazy / guarded)
-DISABLE_DB = bool(os.getenv("DISABLE_DB"))
-if not DISABLE_DB:
-    try:
-        from db import get_db_session  # type: ignore
-        from db_inspector import DatabaseInspector  # type: ignore
-    except Exception as e:
-        # Mark DB disabled if imports fail
-        logging.warning("DB modules unavailable (%s); running in degraded mode", e)
-        DISABLE_DB = True
+# Import our database and inspection utilities
+from db import get_db_session
+from db_inspector import DatabaseInspector
 
 # Load environment variables
 load_dotenv()
@@ -47,16 +41,12 @@ _db_inspector = None
 def get_db_inspector():
     """Get database inspector instance (lazy initialization)"""
     global _db_inspector
-    if DISABLE_DB:
-        class DummyInspector:
-            def get_schema_text(self):
-                return "Database access disabled (DISABLE_DB=1)"
-        return DummyInspector()
     if _db_inspector is None:
         try:
             _db_inspector = DatabaseInspector()
         except Exception as e:
             logger.warning(f"Failed to initialize database inspector: {e}")
+            # Return a dummy inspector that returns error messages
             class DummyInspector:
                 def get_schema_text(self):
                     return f"Error: Database connection failed - {str(e)}"
@@ -114,8 +104,6 @@ def _ensure_limit(query: str, default_limit: int = 200) -> str:
 @lru_cache(maxsize=1)
 def _distinct_account_names() -> List[str]:
     """Cached list of distinct account_name values."""
-    if DISABLE_DB:
-        return []
     try:
         from sqlalchemy import text
         logger.info("_distinct_account_names: querying database for distinct account_name")
@@ -130,8 +118,7 @@ def _distinct_account_names() -> List[str]:
 
 
 def _enable_trgm_if_possible():
-    if DISABLE_DB:
-        return
+    """Attempt to enable pg_trgm extension (Postgres only); ignore failures."""
     try:
         from sqlalchemy import text
         logger.info("_enable_trgm_if_possible: attempting to enable pg_trgm")
@@ -140,11 +127,10 @@ def _enable_trgm_if_possible():
             logger.info("_enable_trgm_if_possible: executed extension create (if needed)")
     except Exception:
         logger.info("_enable_trgm_if_possible: failed or not applicable; ignoring")
+        pass
 
-try:
-    _enable_trgm_if_possible()
-except Exception as e:
-    logger.debug("Ignoring trgm init error: %s", e)
+
+_enable_trgm_if_possible()
 
 
 def get_connection():
@@ -159,9 +145,8 @@ def get_connection():
     """
     logger.info("Creating database session for financial data")
 
-    if DISABLE_DB:
-        raise RuntimeError("Database disabled; no connections available")
     try:
+        # Return the context manager from our db module
         logger.info("get_connection: acquiring session context manager from db.get_db_session")
         return get_db_session()
     except Exception as e:
@@ -208,9 +193,8 @@ def query_database(
             return get_db_inspector().get_schema_text()
 
         if search_account_term:
-            if DISABLE_DB:
-                return "Account search unavailable (database disabled)."
             logger.info("query_database: searching account names for '%s'", search_account_term)
+            # Use fuzzy search to find the best match
             all_names = _distinct_account_names()
             matches = get_close_matches(search_account_term, all_names, n=10, cutoff=0.6)
             if not matches:
@@ -219,8 +203,6 @@ def query_database(
 
         if sql_query:
             logger.info("query_database: executing SQL query: %s", sql_query)
-            if DISABLE_DB:
-                return "SQL querying unavailable (database disabled)."
             if not _is_select_only(sql_query):
                 logger.warning("query_database: rejected non-select query")
                 return json.dumps({"error": "Only read-only SELECT statements are allowed."})
@@ -246,15 +228,5 @@ def query_database(
 
 
 if __name__ == "__main__":
-    logger.info("Starting Financial Reports MCP server (DISABLE_DB=%s)...", DISABLE_DB)
-    try:
-        mcp.run()
-    except Exception as e:
-        logger.exception("Fatal error running MCP server: %s", e)
-        # Ensure flush for hosting logs
-        for h in list(logger.handlers):
-            try:
-                h.flush()
-            except Exception:
-                pass
-        raise
+    logger.info("Starting Financial Reports MCP server...")
+    mcp.run()

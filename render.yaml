@@ -4,7 +4,7 @@ services:
     name: kudwa-backend
     runtime: docker
     dockerfilePath: ./Dockerfile.backend
-    plan: starter
+    plan: free
     envVars:
       - key: PORT
         value: 8430
@@ -23,7 +23,7 @@ services:
     name: kudwa-frontend
     runtime: docker
     dockerfilePath: ./Dockerfile.frontend
-    plan: starter
+    plan: free
     envVars:
       - key: PORT
         value: 8431
@@ -37,4 +37,4 @@ databases:
   - name: kudwa-postgres
     databaseName: kudwadb
     user: kudwa
-    plan: starter
+    plan: free

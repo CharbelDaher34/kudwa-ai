@@ -8,7 +8,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, select
 from data.models import Conversation, Message
-from mcpagent.client import get_financial_data_chat
+from mcpagent.client import FinancialDataChat
 from typing import List, Optional
 import asyncio
 from db import get_session
@@ -89,8 +89,8 @@ async def ask(conv_id: int, prompt: str, sender: Optional[str] = None, session: 
     session.commit()
     session.refresh(user_msg)
 
-    # 2. Get shared chat client (singleton)
-    chat = get_financial_data_chat()
+    # 2. Call LLM via FinancialDataChat
+    chat = FinancialDataChat()
     # Use previous messages for context
     history = session.exec(select(Message).where(Message.conversation_id == conv_id)).all()
     
