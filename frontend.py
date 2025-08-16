@@ -7,7 +7,10 @@ from typing import Optional, List, Dict
 
 # Configuration
 API_BASE_URL = os.getenv("API_BASE_URL", "http://app:8430")
-
+if not API_BASE_URL.startswith("http"):
+    API_BASE_URL = f"https://{API_BASE_URL}.onrender.com"
+    
+    
 st.set_page_config(
     page_title="Financial Data Chat",
     page_icon="💬",
