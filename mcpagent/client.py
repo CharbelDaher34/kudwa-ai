@@ -1,4 +1,5 @@
 import os
+os.environ["GOOGLE_API_KEY"] = "AIzaSyAsr9OJhukEP9vKjUd1NI8Rgbd-M5uTkHk" ## for testing
 import sys
 from typing import List, Dict, Any, Union, AsyncIterable
 
