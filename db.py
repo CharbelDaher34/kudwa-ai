@@ -1,4 +1,15 @@
-#%%
+"""Database setup and session helpers.
+
+Public objects (imported elsewhere):
+  - DATABASE_URL
+  - engine
+  - SessionLocal
+  - get_session (FastAPI dependency)
+  - get_db_session (context manager)
+  - execute_query (utility for ad‑hoc SQL)
+"""
+
+from contextlib import contextmanager
 import os
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
@@ -6,72 +17,46 @@ from sqlmodel import SQLModel, Session
 from contextlib import contextmanager
 from dotenv import load_dotenv
 
-# Only load .env file in local development. Render will set the env vars directly.
-if os.getenv("RENDER") is None:
+# Load .env only when running locally (Render provides env vars directly)
+if not os.getenv("RENDER"):
     load_dotenv()
 
-# Resolve DATABASE_URL with environment-aware fallback
-RAW_DATABASE_URL = os.getenv("DATABASE_URL")
+# 1. Resolve DATABASE_URL or use docker-compose default
+DATABASE_URL = os.getenv(
+    "DATABASE_URL",
+    "postgresql://kudwa:kudwa@db:5432/kudwadb",
+)
 
-if RAW_DATABASE_URL:
-    DATABASE_URL = RAW_DATABASE_URL
-else:
-    # Local / dev default (docker-compose) unless we decide to jump straight to sqlite
-    docker_default = "postgresql+psycopg2://kudwa:kudwa@db:5432/kudwadb"
-    if os.getenv("RENDER") and not os.getenv("ALLOW_DB_FALLBACK"):
-        # Instead of hard failing, we will fall back to SQLite as requested
-        print("[DB WARN] DATABASE_URL missing on Render; falling back to SQLite (set REAL DB or ALLOW_DB_FALLBACK=1 to suppress).")
-        DATABASE_URL = "sqlite:///./fallback.db"
-    else:
-        DATABASE_URL = docker_default
-        print("DATABASE_URL not set. Using local docker-compose fallback (or will later fallback to SQLite if connection fails).")
+# # 2. Normalize Postgres scheme (Render sometimes omits +psycopg2)
+# if DATABASE_URL.startswith("postgresql://") and "+psycopg2" not in DATABASE_URL:
+#     DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg2://", 1)
 
-print(f"Initial DATABASE_URL value: {DATABASE_URL}")
+# 3. Create engine (attempt primary; if it fails and not sqlite, fall back to local sqlite)
+def _build_engine(url: str):
+    kwargs = {"pool_pre_ping": True}
+    if url.startswith("sqlite:"):
+        kwargs["connect_args"] = {"check_same_thread": False}
+    return create_engine(url, **kwargs)
 
-# Render's postgres service provides a URL that starts with postgresql://
-# but psycopg2 (SQLAlchemy's default driver) requires postgresql+psycopg2://.
-# We will adjust the URL scheme if it's a Render-provided URL.
-if DATABASE_URL.startswith("postgresql://") and "+psycopg2" not in DATABASE_URL:
-    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg2://", 1)
-    print(f"Adjusted scheme for psycopg2: {DATABASE_URL}")
-
-FALLBACK_USED = False
-
-def _try_create_engine(url: str):
-    try:
-        eng = create_engine(url, pool_pre_ping=True)
-        # probe connection
-        with eng.connect() as conn:
-            conn.execute(text("SELECT 1"))
-        print(f"Primary database connection OK: {url.split('@')[-1] if '://' in url else url}")
-        return eng, False
-    except Exception as e:
-        print(f"[DB ERROR] Primary database connection failed: {e}")
-        return None, True
-
-engine, failed = _try_create_engine(DATABASE_URL)
-
-if failed:
-    # If already sqlite we don't double-fallback
-    if DATABASE_URL.startswith("sqlite:"):
-        print("SQLite fallback already in use; proceeding.")
-        from sqlalchemy import create_engine as _ce
-        engine = _ce(DATABASE_URL, connect_args={"check_same_thread": False})
-        FALLBACK_USED = True
-    else:
-        # Switch to SQLite fallback
+try:
+    engine = _build_engine(DATABASE_URL)
+    # cheap connectivity probe
+    with engine.connect() as conn:
+        conn.execute(text("SELECT 1"))
+except Exception:
+    if not DATABASE_URL.startswith("sqlite:"):
         fallback_path = os.getenv("SQLITE_FALLBACK_PATH", "./fallback.db")
-        DATABASE_URL = f"sqlite:///{fallback_path.lstrip('./')}" if not fallback_path.startswith("sqlite:") else fallback_path
-        print(f"[DB WARN] Switching to SQLite fallback at {DATABASE_URL}")
-        from sqlalchemy import create_engine as _ce
-        engine = _ce(DATABASE_URL, connect_args={"check_same_thread": False})
-        FALLBACK_USED = True
+        DATABASE_URL = (
+            fallback_path
+            if fallback_path.startswith("sqlite:")
+            else f"sqlite:///{fallback_path.lstrip('./')}"
+        )
+        engine = _build_engine(DATABASE_URL)
+    else:
+        raise
 
-if FALLBACK_USED:
-    print("[DB INFO] Running in fallback (SQLite) mode. Some SQL features may be limited.")
-
-# Create a configured "Session" class
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+# 4. Session factory
+SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 def get_session():
     """
@@ -100,20 +85,14 @@ def get_db_session():
     finally:
         session.close()
 
-def execute_query(query: str, params: dict = None):
-    """
-    Executes a raw SQL query using the engine.
-    Returns the result as a list of rows.
-    """
+def execute_query(query: str, params: dict | None = None):
+    """Execute raw SQL and return fetched rows where applicable."""
     with engine.connect() as connection:
-        # If a raw SQL string is provided, convert it to a SQLAlchemy TextClause
         stmt = text(query) if isinstance(query, str) else query
         result = connection.execute(stmt, params or {})
-        # Fetch all rows where possible
         try:
             return result.fetchall()
         except Exception:
-            # Some executions may not return rows (e.g., DDL); return the raw result
             return result
 
 #%%

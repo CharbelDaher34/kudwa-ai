@@ -5,15 +5,27 @@ from typing import List, Dict, Any, Union, AsyncIterable
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStdio
 from pydantic_ai.messages import ModelMessage
-from pydantic_ai.messages import (
-    AgentStreamEvent,
-    HandleResponseEvent,
-    FunctionToolCallEvent,
-    FunctionToolResultEvent,
-)
+import logging
 from pydantic_ai.exceptions import UserError
-import os
-os.environ["GOOGLE_API_KEY"]="AIzaSyAsr9OJhukEP9vKjUd1NI8Rgbd-M5uTkHk`"
+# Create logger
+logger = logging.getLogger("SimpleLogger")
+logger.setLevel(logging.DEBUG)
+
+# Create console handler and set level
+console_handler = logging.StreamHandler(sys.stdout)
+console_handler.setLevel(logging.DEBUG)
+
+# Create formatter
+formatter = logging.Formatter(
+    '%(asctime)s - %(name)s - %(levelname)-8s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+
+# Add formatter to handler
+console_handler.setFormatter(formatter)
+
+# Add handler to logger
+logger.addHandler(console_handler)
 try:
     # Ensure repo root is importable so we can load db_inspector and db
     repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -37,11 +49,48 @@ class FinancialDataChat:
             model: The name of the LLM model to use.
         """
         # Create MCP server for financial data analysis
-        server = MCPServerStdio(
-            command="uv",
-            args=["run", "server.py"],
-            cwd=os.path.dirname(__file__),
-        )
+     
+        server_script_path = os.path.join(os.path.dirname(__file__), "server.py")
+
+        try:
+            
+            args = [server_script_path]
+            command="python"
+            logger.info(f"command {command}")
+            
+            # Ensure environment variables are passed to the subprocess
+            env = os.environ.copy()
+            logger.info(f"Passing DATABASE_URL {env.get('DATABASE_URL')} to subprocess: {bool(env.get('DATABASE_URL'))}")
+
+            server = MCPServerStdio(
+                command=command,
+                args=args,
+                env=env,
+                cwd=os.path.dirname(__file__),
+            )
+            logger.info("Starting MCP server with: %s %s", command, " ".join(args))
+        except Exception as e:
+            logger.error(f"Failed to start MCP server: {e}")
+            raise
+        try:
+            
+            args = [server_script_path]
+            command="python"
+            logger.info(f"command {command}")
+            
+            # Ensure environment variables are passed to the subprocess
+            env = os.environ.copy()
+            logger.info(f"Passing DATABASE_URL {env.get('DATABASE_URL')} to subprocess: {bool(env.get('DATABASE_URL'))}")
+
+            server = MCPServerStdio(
+                command=command,
+                args=args,
+                env=env,
+            )
+            logger.info("Starting MCP server with: %s %s", command, " ".join(args))
+        except Exception as e:
+            logger.error(f"Failed to start MCP server: {e}")
+            raise        
 
         from datetime import datetime
 
