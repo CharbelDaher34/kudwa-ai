@@ -155,7 +155,7 @@ def get_connection():
 
 
 # MCP Server initialization
-mcp = FastMCP("financial-reports-server")
+mcp = FastMCP("financial-reports-server", stateless_http=True)
 
 
 @mcp.tool(
