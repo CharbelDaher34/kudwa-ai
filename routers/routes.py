@@ -120,6 +120,7 @@ async def ask(conv_id: int, prompt: str, sender: Optional[str] = None, session: 
     except Exception as e:
         import traceback
         print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Error processing request: {str(e)},,, traceback: {traceback.format_exc()}")
     # 3. Extract usage information from the result
     usage_info = None
     new_messages = result.new_messages()
