@@ -114,9 +114,12 @@ async def ask(conv_id: int, prompt: str, sender: Optional[str] = None, session: 
     now given the chat history answer this question:
     {prompt}
     '''
-    # For now, just send the prompt
-    result = await chat.run_interaction(enhanced_prompt)
-
+    try:
+        # For now, just send the prompt
+        result = await chat.run_interaction(enhanced_prompt)
+    except Exception as e:
+        import traceback
+        print(traceback.format_exc())
     # 3. Extract usage information from the result
     usage_info = None
     new_messages = result.new_messages()
